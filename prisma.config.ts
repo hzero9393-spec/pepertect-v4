@@ -4,24 +4,7 @@ import { defineConfig } from 'prisma/config'
 export default defineConfig({
   earlyAccess: true,
   schema: path.join(__dirname, 'prisma', 'schema.prisma'),
-  migrate: {
-    async url() {
-      const tursoUrl = process.env.TURSO_DATABASE_URL
-      const tursoToken = process.env.TURSO_AUTH_TOKEN
-      if (tursoUrl && tursoToken) {
-        return tursoUrl
-      }
-      return process.env.DATABASE_URL || 'file:./db/custom.db'
-    },
-  },
-  db: {
-    async url() {
-      const tursoUrl = process.env.TURSO_DATABASE_URL
-      const tursoToken = process.env.TURSO_AUTH_TOKEN
-      if (tursoUrl && tursoToken) {
-        return tursoUrl
-      }
-      return process.env.DATABASE_URL || 'file:./db/custom.db'
-    },
+  datasource: {
+    url: "postgresql://postgres.atxcddflbwbskzyaahmy:Ashish@603281337259@aws-1-ap-south-1.pooler.supabase.com:5432/postgres",
   },
 })
