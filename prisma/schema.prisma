@@ -441,9 +441,11 @@ model Position {
   marginUsed      Float       @default(0)
   
   // Stop Loss / Target / Exit
-  stopLoss        Float?
-  target          Float?
-  exitReason      String?
+  stopLoss          Float?
+  target            Float?
+  lastCheckedPrice  Float?       // For range-based SL/Target trigger detection
+  slTriggerLock     String?      // Idempotency lock: set when SL/Target is being executed
+  exitReason        String?
   
   // Status
   isOpen          Boolean     @default(true)

@@ -741,6 +741,8 @@ export async function POST(request: NextRequest) {
             }
           })
 
+          let positionId: string
+
           if (existingPosition) {
             const newQty = existingPosition.quantity + totalQty
             const newInvested = existingPosition.totalInvested + totalValue
@@ -758,9 +760,10 @@ export async function POST(request: NextRequest) {
                 unrealizedPnl: Math.round((newCurrent - newInvested) * 100) / 100,
               }
             })
+            positionId = existingPosition.id
           } else {
             const currentValue = totalQty * fillPrice
-            await tx.position.create({
+            const pos = await tx.position.create({
               data: {
                 userId: user.id, segment: 'OPTIONS',
                 productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
@@ -776,9 +779,10 @@ export async function POST(request: NextRequest) {
                 isOpen: true,
               }
             })
+            positionId = pos.id
           }
 
-          return { order, trade, updatedUser }
+          return { order, trade, updatedUser, positionId }
         })
 
         cache.deleteByPrefix(`ubal:${userId}`)
@@ -791,6 +795,7 @@ export async function POST(request: NextRequest) {
           trade: result.trade,
           balance: result.updatedUser.virtualBalance,
           totalPnl: result.updatedUser.totalPnl,
+          positionId: result.positionId, // For setting SL/Target after trade
         }, { status: 201 })
       }
 

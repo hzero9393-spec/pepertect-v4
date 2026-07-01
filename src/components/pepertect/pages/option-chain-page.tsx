@@ -6,6 +6,7 @@ import { useAuthStore } from '@/lib/auth-store'
 import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
 import { X, Minus, Plus, ChevronDown } from 'lucide-react'
+import { useSLMonitor } from '@/lib/use-sl-monitor'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -90,11 +91,14 @@ interface TradeState {
   orderType: 'MARKET' | 'LIMIT'
   productType: 'INTRADAY' | 'DELIVERY'
   limitPrice: string
+  stopLoss: string
+  target: string
 }
 
 const defaultTrade: TradeState = {
   open: false, side: 'BUY', optionType: 'CE', strike: 0, ltp: 0,
   lots: 1, orderType: 'MARKET', productType: 'INTRADAY', limitPrice: '',
+  stopLoss: '', target: '',
 }
 
 // ─── Color Tokens ───────────────────────────────────────────────────────────
@@ -140,6 +144,9 @@ export function OptionChainPage() {
   const userData = useAuthStore(s => s.user)
   const setUser = useAuthStore(s => s.setUser)
   const { showTradeSuccess } = useTradeSuccess()
+
+  // Start SL/Target monitor
+  useSLMonitor()
 
   const lotSize = INDICES.find(i => i.key === index)?.lotSize || 50
   const availableMargin = userData ? (userData.virtualBalance - (userData.marginUsed || 0)) : 0
@@ -313,6 +320,18 @@ export function OptionChainPage() {
         })
         if (resData.balance !== undefined && userData) {
           setUser({ ...userData, virtualBalance: resData.balance, totalPnl: resData.totalPnl ?? userData.totalPnl })
+        }
+        // Set SL/Target on the newly created position if provided
+        if ((trade.stopLoss || trade.target) && token && resData.order?.id) {
+          // Find the position that was just created and set SL/Target
+          const slBody: Record<string, unknown> = { stopLoss: null, target: null }
+          if (trade.stopLoss) slBody.stopLoss = parseFloat(trade.stopLoss)
+          if (trade.target) slBody.target = parseFloat(trade.target)
+          fetch('/api/trade/sl-set', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ positionId: resData.positionId, ...slBody }),
+          }).catch(() => {})
         }
         setTrade(defaultTrade)
         return { success: true }
@@ -751,6 +770,34 @@ export function OptionChainPage() {
                   >
                     <Plus className="size-4" style={{ color: C.textDim }} />
                   </button>
+                </div>
+              </div>
+
+              {/* Stop Loss & Target */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.red }}>Stop Loss</label>
+                  <input
+                    type="number"
+                    value={trade.stopLoss}
+                    onChange={e => setTrade(t => ({ ...t, stopLoss: e.target.value }))}
+                    placeholder="Optional"
+                    className="w-full mt-1 px-3 py-2 rounded-lg border text-sm font-mono"
+                    style={{ borderColor: C.border, color: C.text }}
+                    step="0.05"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.green }}>Target</label>
+                  <input
+                    type="number"
+                    value={trade.target}
+                    onChange={e => setTrade(t => ({ ...t, target: e.target.value }))}
+                    placeholder="Optional"
+                    className="w-full mt-1 px-3 py-2 rounded-lg border text-sm font-mono"
+                    style={{ borderColor: C.border, color: C.text }}
+                    step="0.05"
+                  />
                 </div>
               </div>
 
