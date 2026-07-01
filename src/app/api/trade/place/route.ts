@@ -50,9 +50,23 @@ export async function POST(request: NextRequest) {
     }
 
     // ─── Step 4: Get user ──────────────────────────────────────────
-    const user = await db.user.findUnique({ where: { id: userId } })
+    let user = await db.user.findUnique({ where: { id: userId } })
     if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
     if (!user.isActive) return NextResponse.json({ error: 'Account is deactivated. Contact support.' }, { status: 403 })
+
+    // ─── Step 4b: Sync marginUsed from actual open short positions ──
+    // Prevents stale marginUsed from blocking trades incorrectly
+    const realMarginResult = await db.position.aggregate({
+      where: { userId, isOpen: true, tradeDirection: 'SELL' },
+      _sum: { marginUsed: true },
+    })
+    const realMarginUsed = realMarginResult._sum.marginUsed || 0
+    if (realMarginUsed !== (user.marginUsed || 0)) {
+      user = await db.user.update({
+        where: { id: userId },
+        data: { marginUsed: realMarginUsed },
+      })
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // EQUITY Segment
@@ -81,9 +95,10 @@ export async function POST(request: NextRequest) {
       // ─── BUY EQUITY ──────────────────────────────────────────
       if (direction === 'BUY') {
         const requiredAmount = totalValue + brokerage
-        if (user.virtualBalance < requiredAmount) {
+        const availableBalance = user.virtualBalance - (user.marginUsed || 0)
+        if (availableBalance < requiredAmount) {
           return NextResponse.json({
-            error: `Insufficient balance. Required: ₹${requiredAmount.toLocaleString('en-IN')}, Available: ₹${user.virtualBalance.toLocaleString('en-IN')}`
+            error: `Insufficient balance. Required: ₹${requiredAmount.toLocaleString('en-IN')}, Available: ₹${availableBalance.toLocaleString('en-IN')}`
           }, { status: 400 })
         }
 
@@ -339,9 +354,10 @@ export async function POST(request: NextRequest) {
 
       // ─── BUY FUTURES ──────────────────────────────────────
       if (direction === 'BUY') {
-        if (user.virtualBalance < marginRequired) {
+        const availableBalance = user.virtualBalance - (user.marginUsed || 0)
+        if (availableBalance < marginRequired) {
           return NextResponse.json({
-            error: `Insufficient margin. Required: ₹${marginRequired.toLocaleString('en-IN')}, Available: ₹${user.virtualBalance.toLocaleString('en-IN')}`
+            error: `Insufficient margin. Required: ₹${marginRequired.toLocaleString('en-IN')}, Available: ₹${availableBalance.toLocaleString('en-IN')}`
           }, { status: 400 })
         }
 
@@ -461,9 +477,10 @@ export async function POST(request: NextRequest) {
 
       // ─── SELL FUTURES ─────────────────────────────────────
       if (direction === 'SELL') {
-        if (user.virtualBalance < marginRequired) {
+        const availableBalance = user.virtualBalance - (user.marginUsed || 0)
+        if (availableBalance < marginRequired) {
           return NextResponse.json({
-            error: `Insufficient margin for short position. Required: ₹${marginRequired.toLocaleString('en-IN')}, Available: ₹${user.virtualBalance.toLocaleString('en-IN')}`
+            error: `Insufficient margin for short position. Required: ₹${marginRequired.toLocaleString('en-IN')}, Available: ₹${availableBalance.toLocaleString('en-IN')}`
           }, { status: 400 })
         }
 
@@ -652,9 +669,11 @@ export async function POST(request: NextRequest) {
       // ─── BUY OPTIONS ──────────────────────────────────────
       if (direction === 'BUY') {
         const requiredAmount = totalValue + brokerage
-        if (user.virtualBalance < requiredAmount) {
+        // Available balance = virtualBalance - marginUsed (margin blocked in short positions)
+        const availableBalance = user.virtualBalance - (user.marginUsed || 0)
+        if (availableBalance < requiredAmount) {
           return NextResponse.json({
-            error: `Insufficient balance. Required premium: ₹${requiredAmount.toLocaleString('en-IN')}, Available: ₹${user.virtualBalance.toLocaleString('en-IN')}`
+            error: `Insufficient balance. Required: ₹${requiredAmount.toLocaleString('en-IN')}, Available: ₹${availableBalance.toLocaleString('en-IN')} (Balance: ₹${user.virtualBalance.toLocaleString('en-IN')} - Margin: ₹${(user.marginUsed || 0).toLocaleString('en-IN')})`
           }, { status: 400 })
         }
 
@@ -896,9 +915,11 @@ export async function POST(request: NextRequest) {
         const marginPercent = 150
         const marginRequired = Math.round(totalValue * marginPercent / 100 * 100) / 100
 
-        if (user.virtualBalance < marginRequired) {
+        // Available balance = virtualBalance - marginUsed (margin blocked in other short positions)
+        const availableBalance = user.virtualBalance - (user.marginUsed || 0)
+        if (availableBalance < marginRequired) {
           return NextResponse.json({
-            error: `Insufficient margin for short option. Required: ₹${marginRequired.toLocaleString('en-IN')}, Available: ₹${user.virtualBalance.toLocaleString('en-IN')}`
+            error: `Insufficient margin for short option. Required: ₹${marginRequired.toLocaleString('en-IN')}, Available: ₹${availableBalance.toLocaleString('en-IN')} (Balance: ₹${user.virtualBalance.toLocaleString('en-IN')} - Margin: ₹${(user.marginUsed || 0).toLocaleString('en-IN')})`
           }, { status: 400 })
         }
 

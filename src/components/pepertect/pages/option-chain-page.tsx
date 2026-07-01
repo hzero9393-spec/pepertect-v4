@@ -135,7 +135,12 @@ export function OptionChainPage() {
   const [executing, setExecuting] = useState(false)
 
   const token = useAuthStore(s => s.token)
+  const userData = useAuthStore(s => s.user)
+  const setUser = useAuthStore(s => s.setUser)
   const { showTradeSuccess } = useTradeSuccess()
+
+  // Available margin = virtualBalance - marginUsed
+  const availableMargin = userData ? (userData.virtualBalance - (userData.marginUsed || 0)) : 0
 
   // Lot size for current index
   const lotSize = INDICES.find(i => i.key === index)?.lotSize || 50
@@ -309,6 +314,10 @@ export function OptionChainPage() {
           totalValue: resData.order?.totalValue,
           brokerage: resData.order?.brokerage,
         })
+        // Refresh user data to sync balance & marginUsed
+        if (resData.balance !== undefined && userData) {
+          setUser({ ...userData, virtualBalance: resData.balance, totalPnl: resData.totalPnl ?? userData.totalPnl })
+        }
         setTrade(defaultTrade)
         return { success: true, orderId: resData.order?.id?.slice(-8).toUpperCase(), balance: resData.balance, totalValue: resData.order?.totalValue, brokerage: resData.order?.brokerage }
       } else {
@@ -828,6 +837,12 @@ export function OptionChainPage() {
 
               {/* Order Summary */}
               <div className="rounded-lg p-3 space-y-1.5 text-xs" style={{ background: C.bg }}>
+                <div className="flex justify-between">
+                  <span style={{ color: C.textDim }}>Available Margin</span>
+                  <span className="font-mono font-semibold" style={{ color: availableMargin > totalValue + brokerage ? C.green : C.red }}>
+                    {'\u20B9'}{availableMargin.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span style={{ color: C.textDim }}>Price</span>
                   <span className="font-mono font-semibold" style={{ color: C.text }}>
