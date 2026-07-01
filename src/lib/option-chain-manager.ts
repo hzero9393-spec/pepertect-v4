@@ -8,6 +8,8 @@
  * Indices: NIFTY, BANKNIFTY, FINNIFTY, SENSEX
  */
 
+import { getExpiryDates as getCalendarExpiries } from './upstox-instruments'
+
 const UPSTOX_API_V2 = 'https://api.upstox.com/v2'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -93,7 +95,6 @@ class OptionChainManager {
   private latestData = new Map<string, OCUpdate>()
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>()
   private expiriesCache = new Map<string, string[]>()
-  private fetchingExpiry = new Set<string>()
 
   /** Subscribe to option chain updates for an underlying + expiry */
   subscribe(underlying: string, expiry: string, handler: OCSubscriber): () => void {
@@ -120,45 +121,17 @@ class OptionChainManager {
     }
   }
 
-  /** Get cached expiries for an underlying */
+  /** Get expiries for an underlying (uses calendar, no API call needed) */
   async getExpiries(underlying: string): Promise<string[]> {
     const cached = this.expiriesCache.get(underlying)
     if (cached) return cached
 
-    if (this.fetchingExpiry.has(underlying)) {
-      // Wait for in-flight fetch
-      await new Promise(r => setTimeout(r, 2000))
-      return this.expiriesCache.get(underlying) || []
-    }
-
-    this.fetchingExpiry.add(underlying)
-    try {
-      const config = INDEX_CONFIGS[underlying.toUpperCase()]
-      if (!config) return []
-
-      const token = process.env.UPSTOX_ACCESS_TOKEN
-      if (!token) return []
-
-      const res = await fetch(
-        `${UPSTOX_API_V2}/option/contract?instrument_key=${encodeURIComponent(config.instrumentKey)}`,
-        {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-          signal: AbortSignal.timeout(10000),
-        }
-      )
-
-      if (!res.ok) return []
-
-      const json = await res.json()
-      const data: Array<{ expiry: string }> = json?.data || []
-      const expiries = [...new Set(data.map(d => d.expiry))].sort()
+    // Use calendar-based expiry lookup (instant, no network call)
+    const expiries = await getCalendarExpiries(underlying)
+    if (expiries.length > 0) {
       this.expiriesCache.set(underlying, expiries)
-      return expiries
-    } catch {
-      return []
-    } finally {
-      this.fetchingExpiry.delete(underlying)
     }
+    return expiries
   }
 
   /** Get latest cached data */
