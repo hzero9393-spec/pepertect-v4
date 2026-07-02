@@ -878,6 +878,7 @@ export function OptionChainPage() {
         onClose={() => setConfirmOpen(false)}
         tradeData={confirmData}
         onConfirm={executeTrade}
+        onSuccess={() => useAppStore.getState().setCurrentPage('positions')}
       />
     </div>
   )
