@@ -1,5 +1,5 @@
 // Pepertect - Indian Stock Market Paper Trading Platform
-// Prisma Schema for SQLite
+// Prisma Schema for PostgreSQL
 
 generator client {
   provider = "prisma-client-js"

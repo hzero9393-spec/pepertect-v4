@@ -54,6 +54,7 @@ export async function GET(request: Request) {
         unsubscribe()
         clearInterval(keepAlive)
         clearTimeout(timeout)
+        try { controller.close() } catch { /* already closed */ }
       }
 
       // Handle client disconnect

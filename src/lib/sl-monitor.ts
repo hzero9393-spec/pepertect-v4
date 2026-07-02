@@ -488,7 +488,7 @@ export async function runMonitorCycle(): Promise<MonitorCycleResult> {
 
   return {
     cycleTime: Date.now() - startTime,
-    positionsChecked: triggers.length + errors.length, // Approximate
+    positionsChecked: positions.length,
     triggers,
     errors,
   }

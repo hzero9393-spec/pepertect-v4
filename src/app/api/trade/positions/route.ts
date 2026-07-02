@@ -139,12 +139,12 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // ─── Cache prices for other API calls ───────────────────────
+    // ─── Cache prices for other API calls (standardized shape) ──
     for (const s of stockPrices) {
-      cache.set(CacheKeys.stockPrice(s.symbol), s, CacheTTL.STOCK_PRICE)
+      cache.set(CacheKeys.stockPrice(s.symbol), { currentPrice: s.currentPrice }, CacheTTL.STOCK_PRICE)
     }
     for (const f of futurePrices) {
-      cache.set(CacheKeys.futurePrice(f.underlying), f, CacheTTL.FUTURE_PRICE)
+      cache.set(CacheKeys.futurePrice(f.underlying), { ltp: f.ltp }, CacheTTL.FUTURE_PRICE)
     }
 
     return NextResponse.json({

@@ -174,27 +174,20 @@ class AutoExitWorker {
 
       if (positions.length === 0) return
 
-      // Initialize lastCheckedPrice for new positions
-      for (const pos of positions) {
+      // Initialize lastCheckedPrice for new positions (in-memory, no extra DB round-trip)
+      const allPositions = positions.map(pos => {
         if (!pos.lastCheckedPrice || pos.lastCheckedPrice === 0) {
-          if (pos.currentPrice > 0) {
-            await db.position.update({
+          const price = pos.currentPrice > 0 ? pos.currentPrice : null
+          if (price) {
+            // Fire-and-forget DB update
+            db.position.update({
               where: { id: pos.id },
-              data: { lastCheckedPrice: pos.currentPrice },
+              data: { lastCheckedPrice: price },
             }).catch(() => {})
           }
+          return { ...pos, lastCheckedPrice: price }
         }
-      }
-
-      // Re-fetch to get updated values
-      const allPositions = await db.position.findMany({
-        where: {
-          isOpen: true,
-          OR: [
-            { stopLoss: { gt: 0 } },
-            { target: { gt: 0 } },
-          ],
-        },
+        return pos
       })
 
       for (const position of allPositions) {

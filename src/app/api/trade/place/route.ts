@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { authenticateRequest, calculateBrokerage, checkMarketStatus, validateOrderQuantity } from '@/lib/trade-auth'
+import { authenticateRequest, calculateBrokerage, checkMarketStatus, validateOrderQuantity, getMarginPercent } from '@/lib/trade-auth'
 import { cache, CacheKeys, CacheTTL } from '@/lib/cache'
 import { Prisma } from '@prisma/client'
 import { getAutoExitWorker } from '@/lib/auto-exit-worker'
@@ -91,18 +91,17 @@ export async function POST(request: NextRequest) {
     // EQUITY Segment
     // ═══════════════════════════════════════════════════════════════
     if (segment === 'EQUITY') {
-      // Try cache first, then DB
-      let stock = cache.get<{ currentPrice: number; symbol: string; isActive: boolean } & Record<string, unknown>>(
-        CacheKeys.stockPrice(symbol)
-      ) as (typeof cache extends Map<string, infer V> ? V : never) | null
-
-      if (!stock) {
-        stock = await db.stock.findFirst({
-          where: { symbol, isActive: true }
-        })
-        if (stock) {
-          cache.set(CacheKeys.stockPrice(stock.symbol), stock, CacheTTL.STOCK_PRICE)
+      // Get stock from DB (cache only stores price, we need full record)
+      const stock = await db.stock.findFirst({
+        where: { symbol, isActive: true }
+      })
+      if (stock) {
+        // Override DB price with cached live price if available
+        const cachedPrice = cache.get<{ currentPrice: number }>(CacheKeys.stockPrice(symbol))
+        if (cachedPrice?.currentPrice && cachedPrice.currentPrice > 0) {
+          stock.currentPrice = cachedPrice.currentPrice
         }
+        cache.set(CacheKeys.stockPrice(stock.symbol), { currentPrice: stock.currentPrice }, CacheTTL.STOCK_PRICE)
       }
 
       if (!stock) return NextResponse.json({ error: `Stock not found: ${symbol}` }, { status: 404 })
@@ -171,6 +170,8 @@ export async function POST(request: NextRequest) {
               tradeDirection: 'BUY', isOpen: true,
             }
           })
+
+          let positionId: string
 
           if (existingPosition) {
             const newQty = existingPosition.quantity + quantity
@@ -337,38 +338,37 @@ export async function POST(request: NextRequest) {
       const lots = body.lots || 1
       const expiryDate = body.expiryDate ? new Date(body.expiryDate) : undefined
 
-      // Try cache first
-      let future = cache.get<{ ltp: number; id: string; lotSize: number; marginPercent: number; expiryDate: Date } & Record<string, unknown>>(
-        CacheKeys.futurePrice(symbol)
-      ) as (typeof cache extends Map<string, infer V> ? V : never) | null
+      // Get future from DB (cache only stores price, we need full record)
+      const futureWhere: Record<string, unknown> = {
+        underlying: symbol,
+        isActive: true,
+      }
+      if (expiryDate) futureWhere.expiryDate = expiryDate
 
-      if (!future) {
-        const futureWhere: Record<string, unknown> = {
-          underlying: symbol,
-          isActive: true,
+      const future = await db.future.findFirst({
+        where: futureWhere,
+        orderBy: { expiryDate: 'asc' },
+      })
+
+      if (future) {
+        // Override DB price with cached live price if available
+        const cachedPrice = cache.get<{ ltp: number }>(CacheKeys.futurePrice(symbol))
+        if (cachedPrice?.ltp && cachedPrice.ltp > 0) {
+          future.ltp = cachedPrice.ltp
         }
-        if (expiryDate) futureWhere.expiryDate = expiryDate
-
-        future = await db.future.findFirst({
-          where: futureWhere,
-          orderBy: { expiryDate: 'asc' },
-        }) as (Record<string, unknown> & { ltp: number; id: string; lotSize: number; marginPercent: number; expiryDate: Date }) | null
-
-        if (future) {
-          cache.set(CacheKeys.futurePrice(symbol), future, CacheTTL.FUTURE_PRICE)
-        }
+        cache.set(CacheKeys.futurePrice(symbol), { ltp: future.ltp }, CacheTTL.FUTURE_PRICE)
       }
 
       const indexData = await db.index.findFirst({
         where: { symbol },
       })
 
-      const lotSize = indexData?.lotSize || (future as Record<string, unknown>)?.lotSize as number || 50
-      const fillPrice = future ? (future as Record<string, unknown>).ltp as number : (price || 0)
+      const lotSize = indexData?.lotSize || future?.lotSize || 50
+      const fillPrice = future ? future.ltp : (price || 0)
       const totalQty = lots * lotSize
       const totalValue = Math.round(totalQty * fillPrice * 100) / 100
       const brokerage = calculateBrokerage(totalValue)
-      const marginPercent = (future as Record<string, unknown>)?.marginPercent as number || 12
+      const marginPercent = future?.marginPercent || 12
       const marginRequired = Math.round(totalValue * marginPercent / 100 * 100) / 100
 
       if (!future) {
@@ -402,7 +402,7 @@ export async function POST(request: NextRequest) {
               segment: 'FUTURES',
               productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
               symbol,
-              instrumentId: (future as Record<string, unknown>).id as string,
+              instrumentId: future!.id,
               quantity: totalQty,
               lotSize,
               lots,
@@ -411,7 +411,7 @@ export async function POST(request: NextRequest) {
               totalValue,
               brokerage,
               marginRequired,
-              expiryDate: (future as Record<string, unknown>).expiryDate as Date,
+              expiryDate: future!.expiryDate,
               status: 'FILLED',
               filledAt: new Date(),
             }
@@ -425,12 +425,12 @@ export async function POST(request: NextRequest) {
               productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
               tradeDirection: 'BUY',
               symbol,
-              instrumentId: (future as Record<string, unknown>).id as string,
+              instrumentId: future!.id,
               quantity: totalQty,
               fillPrice,
               totalValue,
               brokerage,
-              expiryDate: (future as Record<string, unknown>).expiryDate as Date,
+              expiryDate: future!.expiryDate,
             }
           })
 
@@ -439,7 +439,7 @@ export async function POST(request: NextRequest) {
               userId: user.id, symbol, segment: 'FUTURES',
               productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
               tradeDirection: 'BUY', isOpen: true,
-              expiryDate: (future as Record<string, unknown>).expiryDate as Date,
+              expiryDate: future!.expiryDate,
             }
           })
 
@@ -477,8 +477,8 @@ export async function POST(request: NextRequest) {
                 totalInvested: totalValue, currentValue,
                 unrealizedPnl: Math.round((currentValue - totalValue) * 100) / 100,
                 marginUsed: marginRequired,
-                instrumentId: (future as Record<string, unknown>).id as string,
-                expiryDate: (future as Record<string, unknown>).expiryDate as Date,
+                instrumentId: future!.id,
+                expiryDate: future!.expiryDate,
                 isOpen: true,
                 ...slTargetData('BUY', fillPrice, stopLoss, target),
               }
@@ -531,7 +531,7 @@ export async function POST(request: NextRequest) {
               segment: 'FUTURES',
               productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
               symbol,
-              instrumentId: (future as Record<string, unknown>).id as string,
+              instrumentId: future!.id,
               quantity: totalQty,
               lotSize,
               lots,
@@ -540,7 +540,7 @@ export async function POST(request: NextRequest) {
               totalValue,
               brokerage,
               marginRequired,
-              expiryDate: (future as Record<string, unknown>).expiryDate as Date,
+              expiryDate: future!.expiryDate,
               status: 'FILLED',
               filledAt: new Date(),
             }
@@ -554,12 +554,12 @@ export async function POST(request: NextRequest) {
               productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
               tradeDirection: 'SELL',
               symbol,
-              instrumentId: (future as Record<string, unknown>).id as string,
+              instrumentId: future!.id,
               quantity: totalQty,
               fillPrice,
               totalValue,
               brokerage,
-              expiryDate: (future as Record<string, unknown>).expiryDate as Date,
+              expiryDate: future!.expiryDate,
             }
           })
 
@@ -568,7 +568,7 @@ export async function POST(request: NextRequest) {
               userId: user.id, symbol, segment: 'FUTURES',
               productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
               tradeDirection: 'SELL', isOpen: true,
-              expiryDate: (future as Record<string, unknown>).expiryDate as Date,
+              expiryDate: future!.expiryDate,
             }
           })
 
@@ -606,8 +606,8 @@ export async function POST(request: NextRequest) {
                 totalInvested: totalValue, currentValue,
                 unrealizedPnl: Math.round((currentValue - totalValue) * 100) / 100,
                 marginUsed: marginRequired,
-                instrumentId: (future as Record<string, unknown>).id as string,
-                expiryDate: (future as Record<string, unknown>).expiryDate as Date,
+                instrumentId: future!.id,
+                expiryDate: future!.expiryDate,
                 isOpen: true,
                 ...slTargetData('SELL', fillPrice, stopLoss, target),
               }
@@ -653,26 +653,25 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'strikePrice is required and must be positive' }, { status: 400 })
       }
 
-      // Try cache first, then DB lookup
-      let option = cache.get<{ ltp: number; id: string; expiryDate: Date } & Record<string, unknown>>(
-        CacheKeys.optionPrice(symbol, optionType, strikePrice)
-      ) as (Record<string, unknown> & { ltp: number; id: string; expiryDate: Date }) | null
+      // Get option from DB (cache only stores price, we need full record)
+      let option = await db.option.findFirst({
+        where: {
+          underlying: symbol,
+          optionType: optionType as 'CE' | 'PE',
+          strikePrice,
+          isActive: true,
+          ...(requestExpiry ? { expiryDate: requestExpiry } : {}),
+        },
+        orderBy: { expiryDate: 'asc' },
+      })
 
-      if (!option) {
-        option = await db.option.findFirst({
-          where: {
-            underlying: symbol,
-            optionType: optionType as 'CE' | 'PE',
-            strikePrice,
-            isActive: true,
-            ...(requestExpiry ? { expiryDate: requestExpiry } : {}),
-          },
-          orderBy: { expiryDate: 'asc' },
-        }) as (Record<string, unknown> & { ltp: number; id: string; expiryDate: Date }) | null
-
-        if (option) {
-          cache.set(CacheKeys.optionPrice(symbol, optionType, strikePrice), option, CacheTTL.OPTION_PRICE)
+      if (option) {
+        // Override DB price with cached live price if available
+        const cachedOpt = cache.get<{ ltp: number }>(CacheKeys.optionPrice(symbol, optionType, strikePrice))
+        if (cachedOpt?.ltp && cachedOpt.ltp > 0) {
+          option.ltp = cachedOpt.ltp
         }
+        cache.set(CacheKeys.optionPrice(symbol, optionType, strikePrice), { ltp: option.ltp }, CacheTTL.OPTION_PRICE)
       }
 
       // For index options from live option chain, use request data if DB lookup fails
@@ -953,7 +952,7 @@ export async function POST(request: NextRequest) {
         }
 
         // ─── SELL to open short position (no existing BUY) ──
-        const marginPercent = 150
+        const marginPercent = getMarginPercent('OPTIONS')
         const marginRequired = Math.round(totalValue * marginPercent / 100 * 100) / 100
 
         // Available balance = virtualBalance - marginUsed (margin blocked in other short positions)

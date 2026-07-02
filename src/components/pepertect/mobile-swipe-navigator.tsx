@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useCallback, type ReactNode } from 'react'
+import { useRef, useCallback, useEffect, type ReactNode } from 'react'
 import { useAppStore, type PageId } from '@/lib/store'
 
 // Pages in swipe order (same as mobile nav bar)
@@ -205,8 +205,9 @@ export function MobileSwipeNavigator({ children }: { children: ReactNode }) {
   }, [isSwipeable, currentIndex, setCurrentPage, setTransform, clearTransform, addTransition])
 
   // Cleanup rAF on unmount
-  const cleanupRaf = useCallback(() => cancelAnimationFrame(rafId.current), [])
-  useRef(cleanupRaf).current
+  useEffect(() => {
+    return () => cancelAnimationFrame(rafId.current)
+  }, [])
 
   // Non-swipeable pages: pass through
   if (!isSwipeable) return <>{children}</>

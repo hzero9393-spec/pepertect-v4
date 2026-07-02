@@ -34,7 +34,7 @@ export function useSLMonitor() {
   const userData = useAuthStore(s => s.user)
   const { showTradeSuccess } = useTradeSuccess()
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const lastTriggerRef = useRef<string>('') // Prevent duplicate UI alerts
+  const recentTriggersRef = useRef<Set<string>>(new Set()) // Track all recent triggers to prevent duplicate UI alerts
 
   const runCheck = useCallback(async () => {
     if (!token) return
@@ -53,8 +53,8 @@ export function useSLMonitor() {
         for (const trigger of data.triggered) {
           // Prevent duplicate alerts for same position
           const alertKey = `${trigger.positionId}:${trigger.reason}`
-          if (lastTriggerRef.current === alertKey) continue
-          lastTriggerRef.current = alertKey
+          if (recentTriggersRef.current.has(alertKey)) continue
+          recentTriggersRef.current.add(alertKey)
 
           if (trigger.exitSuccess && trigger.pnl !== undefined) {
             showTradeSuccess({
@@ -80,11 +80,9 @@ export function useSLMonitor() {
             }
           } catch { /* ignore */ }
 
-          // Reset alert key after 5 seconds
+          // Remove from recent set after 5 seconds to allow future alerts
           setTimeout(() => {
-            if (lastTriggerRef.current === alertKey) {
-              lastTriggerRef.current = ''
-            }
+            recentTriggersRef.current.delete(alertKey)
           }, 5000)
         }
       }
