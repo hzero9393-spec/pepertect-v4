@@ -83,3 +83,4 @@ prisma/dev.db
 # Secret files
 .vercel-token
 PEPERTECT_CREDENTIALS.md
+package-lock.json
