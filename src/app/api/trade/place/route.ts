@@ -423,6 +423,8 @@ export async function POST(request: NextRequest) {
             }
           })
 
+          let positionId: string
+
           if (existingPosition) {
             const newQty = existingPosition.quantity + totalQty
             const newInvested = existingPosition.totalInvested + totalValue
@@ -442,9 +444,10 @@ export async function POST(request: NextRequest) {
                 marginUsed: newMargin,
               }
             })
+            positionId = existingPosition.id
           } else {
             const currentValue = totalQty * fillPrice
-            await tx.position.create({
+            const pos = await tx.position.create({
               data: {
                 userId: user.id, segment: 'FUTURES',
                 productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
@@ -459,9 +462,10 @@ export async function POST(request: NextRequest) {
                 isOpen: true,
               }
             })
+            positionId = pos.id
           }
 
-          return { order, trade, updatedUser }
+          return { order, trade, updatedUser, positionId }
         })
 
         cache.deleteByPrefix(`ubal:${userId}`)
@@ -474,6 +478,7 @@ export async function POST(request: NextRequest) {
           trade: result.trade,
           balance: result.updatedUser.virtualBalance,
           totalPnl: result.updatedUser.totalPnl,
+          positionId: result.positionId,
           marginRequired,
         }, { status: 201 })
       }
@@ -546,6 +551,8 @@ export async function POST(request: NextRequest) {
             }
           })
 
+          let positionId: string
+
           if (existingPosition) {
             const newQty = existingPosition.quantity + totalQty
             const newInvested = existingPosition.totalInvested + totalValue
@@ -565,9 +572,10 @@ export async function POST(request: NextRequest) {
                 marginUsed: newMargin,
               }
             })
+            positionId = existingPosition.id
           } else {
             const currentValue = totalQty * fillPrice
-            await tx.position.create({
+            const pos = await tx.position.create({
               data: {
                 userId: user.id, segment: 'FUTURES',
                 productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
@@ -582,9 +590,10 @@ export async function POST(request: NextRequest) {
                 isOpen: true,
               }
             })
+            positionId = pos.id
           }
 
-          return { order, trade, updatedUser }
+          return { order, trade, updatedUser, positionId }
         })
 
         cache.deleteByPrefix(`ubal:${userId}`)
@@ -595,6 +604,7 @@ export async function POST(request: NextRequest) {
           message: `SELL ${lots} lots (${totalQty} qty) ${symbol} FUT @ ₹${fillPrice}`,
           order: result.order,
           trade: result.trade,
+          positionId: result.positionId,
           balance: result.updatedUser.virtualBalance,
           totalPnl: result.updatedUser.totalPnl,
           marginRequired,
@@ -998,6 +1008,8 @@ export async function POST(request: NextRequest) {
             }
           })
 
+          let positionId: string
+
           if (existingSellPosition) {
             const newQty = existingSellPosition.quantity + totalQty
             const newInvested = existingSellPosition.totalInvested + totalValue
@@ -1017,9 +1029,10 @@ export async function POST(request: NextRequest) {
                 marginUsed: newMargin,
               }
             })
+            positionId = existingSellPosition.id
           } else {
             const currentValue = totalQty * fillPrice
-            await tx.position.create({
+            const pos = await tx.position.create({
               data: {
                 userId: user.id, segment: 'OPTIONS',
                 productType: productType as 'INTRADAY' | 'DELIVERY' | 'CARRY_FORWARD',
@@ -1036,9 +1049,10 @@ export async function POST(request: NextRequest) {
                 isOpen: true,
               }
             })
+            positionId = pos.id
           }
 
-          return { order, trade, updatedUser }
+          return { order, trade, updatedUser, positionId }
         })
 
         cache.deleteByPrefix(`ubal:${userId}`)
@@ -1049,6 +1063,7 @@ export async function POST(request: NextRequest) {
           message: `SELL (SHORT) ${lots} lots (${totalQty} qty) ${symbol} ${strikePrice} ${optionType} @ ₹${fillPrice}`,
           order: result.order,
           trade: result.trade,
+          positionId: result.positionId,
           balance: result.updatedUser.virtualBalance,
           totalPnl: result.updatedUser.totalPnl,
           marginRequired,

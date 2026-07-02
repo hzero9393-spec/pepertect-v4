@@ -58,6 +58,7 @@ interface PositionData {
   unrealizedPnlPercent: number
   realizedPnl?: number | null
   exitPrice?: number | null
+  exitReason?: string | null
   closedAt?: string | null
   marginUsed: number
   lots: number
@@ -345,6 +346,15 @@ const ClosedPositionCard = memo(function ClosedPositionCard({
             <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-[#6b7280]/10 text-[#6b7280] font-semibold uppercase shrink-0">
               Closed
             </Badge>
+            {pos.exitReason && (
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                pos.exitReason === 'TARGET'
+                  ? 'bg-[#00B386]/10 text-[#00B386]'
+                  : 'bg-[#EB5B3C]/10 text-[#EB5B3C]'
+              }`}>
+                {pos.exitReason === 'TARGET' ? 'Target Hit' : 'SL Hit'}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-[#6b7280]">
             {pos.segment === 'OPTIONS' && pos.strikePrice && (
@@ -482,14 +492,14 @@ function DetailRow({ icon: Icon, label, value, valueClass }: {
 
 // ─── SL / Target Editor ────────────────────────────────────────
 
-function SLEditor({ position }: { position: PositionData }) {
+function SLEditor({ position, onUpdated }: { position: PositionData; onUpdated?: (pos: Partial<PositionData>) => void }) {
   const token = useAuthStore(s => s.token)
   const [sl, setSl] = useState(position.stopLoss ? String(position.stopLoss) : '')
   const [tgt, setTgt] = useState(position.target ? String(position.target) : '')
   const [saving, setSaving] = useState(false)
 
   const handleSave = async () => {
-    if (!token || !sl && !tgt) return
+    if (!token || (!sl && !tgt)) return
     setSaving(true)
     try {
       const body: Record<string, unknown> = { positionId: position.id, stopLoss: null, target: null }
@@ -503,6 +513,10 @@ function SLEditor({ position }: { position: PositionData }) {
       const data = await res.json()
       if (res.ok && data.success) {
         toast.success(`SL/Target updated for ${position.symbol}`)
+        onUpdated?.({
+          stopLoss: sl ? parseFloat(sl) : null,
+          target: tgt ? parseFloat(tgt) : null,
+        })
       } else {
         toast.error(data.error || 'Failed to update SL/Target')
       }
@@ -526,6 +540,7 @@ function SLEditor({ position }: { position: PositionData }) {
         setSl('')
         setTgt('')
         toast.success('SL/Target removed')
+        onUpdated?.({ stopLoss: null, target: null })
       }
     } catch {
       toast.error('Failed to remove')
@@ -733,7 +748,16 @@ function PositionDetailSheet({
 
         {/* SL / Target Edit */}
         {isPositionOpen && (
-          <SLEditor position={position} />
+          <SLEditor
+            position={position}
+            onUpdated={(updates) => {
+              setDetailPosition(prev => prev ? { ...prev, ...updates } : null)
+              // Also update the main positions list so SL/Target badges update immediately
+              setPositions(prev => prev.map(p =>
+                p.id === position.id ? { ...p, ...updates } : p
+              ))
+            }}
+          />
         )}
 
         {/* Square Off button for open positions */}
@@ -871,6 +895,68 @@ export function PositionsPage() {
     const interval = setInterval(fetchPositions, 10000)
     return () => clearInterval(interval)
   }, [fetchPositions])
+
+  // ─── SL/Target Monitor Polling ────────────────────────────
+  // Polls every 2 seconds when user has positions with SL/Target set
+  // This is the CRITICAL piece that makes SL/Target auto-exit work
+  useEffect(() => {
+    if (!token) return
+
+    const hasSLPositions = positions.some(
+      p => p.isOpen !== false && ((p.stopLoss && p.stopLoss > 0) || (p.target && p.target > 0))
+    )
+
+    if (!hasSLPositions) return
+
+    let cancelled = false
+
+    const runMonitor = async () => {
+      if (cancelled || !token) return
+      try {
+        const res = await fetch('/api/trade/sl-monitor', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok || cancelled) return
+
+        const data = await res.json()
+
+        if (data.triggered && data.triggered.length > 0) {
+          // Show toast for each triggered position
+          for (const trigger of data.triggered) {
+            if (trigger.exitSuccess) {
+              const reasonLabel = trigger.reason === 'STOP_LOSS' ? 'Stop Loss' : 'Target'
+              const pnlStr = trigger.pnl !== undefined
+                ? ` | P&L: ${trigger.pnl >= 0 ? '+' : ''}₹${Math.abs(trigger.pnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                : ''
+              toast.success(`${reasonLabel} hit! ${trigger.symbol || ''} exited @ ₹${trigger.triggerPrice}${pnlStr}`, {
+                description: `Auto-exited via ${reasonLabel}`,
+                duration: 5000,
+              })
+            } else {
+              toast.error(`SL/Target exit failed for ${trigger.symbol || 'position'}`, {
+                description: trigger.exitError || 'Unknown error',
+                duration: 5000,
+              })
+            }
+          }
+          // Refetch positions immediately after trigger
+          fetchPositions()
+        }
+      } catch {
+        // Silent — don't spam errors on network hiccups
+      }
+    }
+
+    // Run immediately, then every 2 seconds
+    runMonitor()
+    const interval = setInterval(runMonitor, 2000)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [token, positions, fetchPositions])
 
   // ─── Square Off ───────────────────────────────────────────
   const handleSquareOff = useCallback(async (positionId: string, symbol: string) => {
