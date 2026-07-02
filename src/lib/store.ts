@@ -27,15 +27,20 @@ export type PageId =
   | 'about-us'
   | 'refund-policy'
 
+export type PositionsTab = 'stocks' | 'index' | 'nifty' | 'banknifty' | 'finnifty'
+
 // ─── URL Mapping ──────────────────────────────────────────────────────────
 
-/** Map PageId to URL path */
+/** Valid positions sub-tabs */
+const VALID_POSITIONS_TABS = new Set<PositionsTab>(['stocks', 'index', 'nifty', 'banknifty', 'finnifty'])
+
+/** Map PageId to URL path (positions tab is handled separately) */
 const pageToUrlMap: Record<PageId, string> = {
   dashboard: '/',
   trading: '/stocks',
   stockOverview: '/stock', // needs symbol appended
   indexDetail: '/index',   // needs symbol appended
-  positions: '/positions',
+  positions: '/positions/stocks',
   orders: '/orders',
   portfolio: '/portfolio',
   reports: '/reports',
@@ -56,19 +61,25 @@ const pageToUrlMap: Record<PageId, string> = {
   'refund-policy': '/refund-policy',
 }
 
-/** Get URL for a page (with optional stock/index symbol) */
-export function getPageUrl(page: PageId, symbol?: string | null): string {
+/** Get URL for a page (with optional stock/index symbol, or positions tab) */
+export function getPageUrl(page: PageId, symbol?: string | null, positionsTab?: PositionsTab | null): string {
   const baseUrl = pageToUrlMap[page]
   if (!baseUrl) return '/'
   
   if ((page === 'stockOverview' || page === 'indexDetail') && symbol) {
     return `${baseUrl}/${encodeURIComponent(symbol)}`
   }
+  
+  // Override positions URL with tab
+  if (page === 'positions' && positionsTab && VALID_POSITIONS_TABS.has(positionsTab)) {
+    return `/positions/${positionsTab}`
+  }
+  
   return baseUrl
 }
 
-/** Parse URL path to determine page and symbol */
-export function parseUrlPath(pathname: string): { page: PageId; stockSymbol?: string; indexSymbol?: string } {
+/** Parse URL path to determine page, symbol, and positions tab */
+export function parseUrlPath(pathname: string): { page: PageId; stockSymbol?: string; indexSymbol?: string; positionsTab?: PositionsTab } {
   // Remove trailing slash
   const path = pathname.replace(/\/$/, '') || '/'
   
@@ -76,7 +87,18 @@ export function parseUrlPath(pathname: string): { page: PageId; stockSymbol?: st
   if (path === '/') return { page: 'dashboard' }
   if (path === '/stocks') return { page: 'trading' }
   if (path === '/watchlist') return { page: 'watchlist' }
-  if (path === '/positions') return { page: 'positions' }
+
+  // /positions/[tab] — positions with sub-tab
+  const positionsMatch = path.match(/^\/positions\/([a-z]+)$/)
+  if (positionsMatch) {
+    const tab = positionsMatch[1] as PositionsTab
+    if (VALID_POSITIONS_TABS.has(tab)) {
+      return { page: 'positions', positionsTab: tab }
+    }
+    return { page: 'positions' }
+  }
+  if (path === '/positions') return { page: 'positions', positionsTab: 'stocks' }
+
   if (path === '/orders') return { page: 'orders' }
   if (path === '/portfolio') return { page: 'portfolio' }
   if (path === '/reports') return { page: 'reports' }
@@ -119,6 +141,7 @@ interface AppState {
   watchlistSidebarOpen: boolean
   selectedStockSymbol: string | null
   selectedIndexSymbol: string | null
+  positionsTab: PositionsTab
   urlSyncEnabled: boolean
   // Shared date filter state (persists across pages)
   dateFilterPreset: DateFilterPreset
@@ -130,6 +153,8 @@ interface AppState {
   setWatchlistSidebarOpen: (open: boolean) => void
   setSelectedStockSymbol: (symbol: string | null) => void
   setSelectedIndexSymbol: (symbol: string | null) => void
+  setPositionsTab: (tab: PositionsTab) => void
+  navigateToPositions: (tab: PositionsTab) => void
   navigateToStock: (symbol: string) => void
   navigateToIndex: (symbol: string) => void
   initFromUrl: () => void
@@ -155,6 +180,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   watchlistSidebarOpen: false,
   selectedStockSymbol: null,
   selectedIndexSymbol: null,
+  positionsTab: 'stocks' as PositionsTab,
   urlSyncEnabled: true,
   dateFilterPreset: 'all',
   dateFilterRange: undefined,
@@ -162,10 +188,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   setCurrentPage: (page) => {
     const state = get()
-    set({ currentPage: page, sidebarOpen: false })
+    const updates: Partial<AppState> = { currentPage: page, sidebarOpen: false }
+    // Reset positionsTab to 'stocks' when navigating away from positions
+    if (page !== 'positions') {
+      updates.positionsTab = 'stocks'
+    }
+    set(updates)
     // Push URL change
     if (state.urlSyncEnabled) {
-      pushUrl(getPageUrl(page))
+      pushUrl(getPageUrl(page, null, page === 'positions' ? state.positionsTab : null))
     }
   },
   
@@ -174,6 +205,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedStockSymbol: (symbol) => set({ selectedStockSymbol: symbol }),
   setSelectedIndexSymbol: (symbol) => set({ selectedIndexSymbol: symbol }),
   
+  setPositionsTab: (tab) => {
+    const state = get()
+    if (state.positionsTab === tab) return
+    set({ positionsTab: tab })
+    if (state.urlSyncEnabled && state.currentPage === 'positions') {
+      pushUrl(`/positions/${tab}`)
+    }
+  },
+
+  navigateToPositions: (tab) => {
+    const state = get()
+    set({ positionsTab: tab, currentPage: 'positions', sidebarOpen: false })
+    if (state.urlSyncEnabled) {
+      pushUrl(`/positions/${tab}`)
+    }
+  },
+
   navigateToStock: (symbol) => {
     const state = get()
     set({ selectedStockSymbol: symbol, currentPage: 'stockOverview', sidebarOpen: false })
@@ -195,10 +243,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Initialize store state from current URL (called on mount)
   initFromUrl: () => {
     if (typeof window === 'undefined') return
-    const { page, stockSymbol, indexSymbol } = parseUrlPath(window.location.pathname)
+    const { page, stockSymbol, indexSymbol, positionsTab } = parseUrlPath(window.location.pathname)
     const updates: Partial<AppState> = { currentPage: page }
     if (stockSymbol) updates.selectedStockSymbol = stockSymbol
     if (indexSymbol) updates.selectedIndexSymbol = indexSymbol
+    if (positionsTab) updates.positionsTab = positionsTab
     set(updates)
   },
   

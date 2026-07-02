@@ -196,12 +196,13 @@ export function AppShell() {
   // Handle browser back/forward (popstate)
   useEffect(() => {
     const handlePopState = () => {
-      const { page, stockSymbol, indexSymbol } = parseUrlPath(window.location.pathname)
+      const { page, stockSymbol, indexSymbol, positionsTab } = parseUrlPath(window.location.pathname)
       // Temporarily disable URL sync to avoid pushing back to the URL we just came from
       useAppStore.setState({
         currentPage: page,
         selectedStockSymbol: stockSymbol || useAppStore.getState().selectedStockSymbol,
         selectedIndexSymbol: indexSymbol || useAppStore.getState().selectedIndexSymbol,
+        ...(positionsTab ? { positionsTab } : {}),
       })
     }
 
