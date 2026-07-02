@@ -97,13 +97,13 @@ export function MobileSwipeNavigator({ children }: { children: ReactNode }) {
     // Prevent browser scroll during horizontal swipe
     e.preventDefault()
 
-    // INVERTED: content moves opposite to finger (like pushing a page away)
-    let offset = -dx
+    // Content follows finger direction
+    let offset = dx
     const atStart = currentIndex === 0 && dx < 0   // can't go before first
     const atEnd = currentIndex === SWIPE_PAGES.length - 1 && dx > 0  // can't go past last
 
     if (atStart || atEnd) {
-      offset = -dx * 0.15
+      offset = dx * 0.15
     }
 
     // Subtle opacity + scale for depth
@@ -159,8 +159,8 @@ export function MobileSwipeNavigator({ children }: { children: ReactNode }) {
     // ── Commit navigation ──
     locked.current = true
 
-    // INVERTED: finger right (dx>0) → content left → next page
-    //            finger left  (dx<0) → content right → previous page
+    // finger right (dx>0) → content right → next page
+    // finger left  (dx<0) → content left → previous page
     const goNext = dx > 0 && currentIndex < SWIPE_PAGES.length - 1
     const goPrev = dx < 0 && currentIndex > 0
 
@@ -177,8 +177,8 @@ export function MobileSwipeNavigator({ children }: { children: ReactNode }) {
       return
     }
 
-    // goNext → slide content LEFT (negative), goPrev → slide content RIGHT (positive)
-    const slideDir = goNext ? -1 : 1
+    // goNext → slide content RIGHT (positive), goPrev → slide content LEFT (negative)
+    const slideDir = goNext ? 1 : -1
     const targetIndex = goNext ? currentIndex + 1 : currentIndex - 1
     const screenW = window.innerWidth
 
