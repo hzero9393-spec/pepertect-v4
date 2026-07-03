@@ -96,4 +96,4 @@ server.listen(PORT, () => {
   console.log(`  WebSocket: ws://localhost:${PORT}/ws`)
   console.log(`  Env:       ${process.env.NODE_ENV || 'development'}`)
   console.log('════════════════════════════════════════════════════════')
-})
+})// deploy trigger v2
