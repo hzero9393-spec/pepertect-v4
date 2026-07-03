@@ -354,26 +354,44 @@ export function DashboardPage() {
     fetchSectors()
     setLastRefreshed(new Date())
 
-    // WS-first: When connected, poll REST less frequently (5s backup)
-    // When disconnected, poll every 1s for near-real-time
-    const pollInterval = isWsConnected ? 5000 : 1000
-
-    refreshTimerRef.current = setInterval(() => {
-      // Always poll these (not available via WS)
-      fetchGainers()
-      fetchLosers()
-      fetchMarketStatus()
-      fetchMarketBreadth()
+    // ─── Smart polling based on SSE connection ──────────────────
+    // SSE connected: skip indices (real-time via SSE) & market status (fetched elsewhere),
+    //   poll gainers/losers/breadth every 30s (they don't change every second),
+    //   poll sectors every 5min (rarely change).
+    // SSE disconnected: poll all every 5s as fallback.
+    if (isWsConnected) {
+      // One-time fetch for sectors (they rarely change)
       fetchSectors()
-
-      // Poll indices
-      fetchIndices()
-
-      setLastRefreshed(new Date())
-    }, pollInterval)
-
-    return () => {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
+      // Gainers/losers/breadth/status — slower poll when SSE is live
+      const slowPoll = setInterval(() => {
+        fetchGainers()
+        fetchLosers()
+        fetchMarketBreadth()
+        fetchMarketStatus()
+        setLastRefreshed(new Date())
+      }, 30000)
+      // Sectors re-fetch every 5min
+      const sectorPoll = setInterval(() => {
+        fetchSectors()
+      }, 300000)
+      return () => {
+        clearInterval(slowPoll)
+        clearInterval(sectorPoll)
+      }
+    } else {
+      // No SSE — poll all every 5s
+      refreshTimerRef.current = setInterval(() => {
+        fetchIndices()
+        fetchGainers()
+        fetchLosers()
+        fetchMarketStatus()
+        fetchMarketBreadth()
+        fetchSectors()
+        setLastRefreshed(new Date())
+      }, 5000)
+      return () => {
+        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
+      }
     }
   }, [fetchIndices, fetchGainers, fetchLosers, fetchMarketStatus, fetchMarketBreadth, fetchHolidays, fetchSectors, isWsConnected])
 

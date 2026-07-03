@@ -208,7 +208,7 @@ class MarketDataManager {
     if (this.marketStatusTimer) clearInterval(this.marketStatusTimer)
     this.marketStatusTimer = setInterval(() => {
       void this.checkMarketStatus()
-    }, 60000)
+    }, 120000) // 2min — status rarely changes, and /api/market/status has 10s server cache
   }
 
   disconnect() {

@@ -89,9 +89,14 @@ export async function GET(request: Request) {
   const worker = getAutoExitWorker()
   worker.ensureRunning()
 
+  // ─── In-memory position cache (avoids DB query every cycle) ─────
+  let cachedPositions: Awaited<ReturnType<typeof db.position.findMany>> | null = null
+  let positionsDirty = true // force first DB fetch
+
   const unsubscribe = worker.onExit((event: ExitEvent) => {
     if (event.userId === userId) {
       exitEvents.set(event.positionId, event)
+      positionsDirty = true // positions changed — force DB refresh
     }
   })
 
@@ -101,22 +106,28 @@ export async function GET(request: Request) {
     if (!running) return
 
     try {
-      const positions = await db.position.findMany({
-        where: { userId, isOpen: true },
-        select: {
-          id: true,
-          symbol: true,
-          segment: true,
-          optionType: true,
-          strikePrice: true,
-          expiryDate: true,
-          tradeDirection: true,
-          entryPrice: true,
-          quantity: true,
-          totalInvested: true,
-          currentPrice: true,
-        },
-      })
+      // Only hit DB if dirty (exit event) or every 10s refresh
+      if (positionsDirty || !cachedPositions) {
+        cachedPositions = await db.position.findMany({
+          where: { userId, isOpen: true },
+          select: {
+            id: true,
+            symbol: true,
+            segment: true,
+            optionType: true,
+            strikePrice: true,
+            expiryDate: true,
+            tradeDirection: true,
+            entryPrice: true,
+            quantity: true,
+            totalInvested: true,
+            currentPrice: true,
+          },
+        })
+        positionsDirty = false
+      }
+
+      const positions = cachedPositions
 
       const updates: PositionUpdate[] = []
 
@@ -190,7 +201,7 @@ export async function GET(request: Request) {
     } catch { /* next cycle */ }
 
     if (running) {
-      setTimeout(pollPositions, 3000)
+      setTimeout(pollPositions, 10000) // 10s — live prices come from OC/WS SSE, not DB
     }
   }
 

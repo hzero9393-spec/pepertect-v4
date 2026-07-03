@@ -108,7 +108,9 @@ export function GlobalSLMonitor() {
       return
     }
 
-    intervalRef.current = setInterval(runCheck, 1000)
+    // Server-side AutoExitWorker runs at 500ms — frontend only needs to
+  // poll for trigger notifications. 30s is plenty responsive.
+  intervalRef.current = setInterval(runCheck, 30000)
     runCheck()
 
     return () => {
