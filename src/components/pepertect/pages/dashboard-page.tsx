@@ -288,7 +288,7 @@ export function DashboardPage() {
   // ─── Fetch Sectors ────────────────────────────────────────────
   const fetchSectors = useCallback(async () => {
     try {
-      const res = await fetch('/api/sectors')
+      const res = await fetch('https://pepertect-api.onrender.com/api/sectors')
       if (res.ok) {
         const json = await res.json()
         if (json.success && json.data?.length > 0) setSectors(json.data)

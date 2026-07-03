@@ -1,14 +1,16 @@
 'use client'
 
 // ─── Real-Time Market Data Hook ────────────────────────────────────────
-// Uses Server-Sent Events (SSE) for real-time push from the server
-// Falls back to REST polling when SSE is unavailable
+// Uses WebSocket (Render server) for real-time push
+// Falls back to REST polling when WS is unavailable
 //
 // Architecture:
-//   Upstox API → UpstoxWsManager (server) → SSE stream → Frontend
+//   Yahoo Finance → Render WS Server → WebSocket → Frontend
 //   Fallback: REST polling → /api/market/live → Frontend
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { wsClient, type WSStatus } from '@/lib/ws-client'
+import { useAuthStore } from '@/lib/auth-store'
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -98,12 +100,9 @@ class MarketDataManager {
   private statusHandlers = new Set<StatusHandler>()
   private optionChainHandlers = new Map<string, Set<OptionChainHandler>>()
 
-  // SSE connection
-  private eventSource: EventSource | null = null
+  // WebSocket connection (managed by wsClient singleton)
+  private wsCleanupFns: (() => void)[] = []
   private _status: ConnectionStatus = 'disconnected'
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private reconnectAttempts = 0
-  private maxReconnectAttempts = 50
 
   // REST fallback
   private restPollTimer: ReturnType<typeof setInterval> | null = null
@@ -139,87 +138,63 @@ class MarketDataManager {
   get indices(): Record<string, WsIndexQuote> { return this.latestIndices }
   get marketClosed(): boolean { return this._marketClosed }
 
-  // ─── SSE Connection ────────────────────────────────────────────
+  // ─── WebSocket Connection ──────────────────────────────────────
 
   connect() {
-    if (this.eventSource) return // Already connected or connecting
+    if (this.wsCleanupFns.length > 0) return // Already connected
+
+    // Ensure WS is connected with auth token
+    const token = useAuthStore.getState().token
+    if (token) wsClient.connect(token)
 
     this._status = 'connecting'
     this.notifyStatusHandlers()
 
-    try {
-      // Connect to SSE stream
-      this.eventSource = new EventSource('/api/market/stream')
-
-      this.eventSource.onopen = () => {
-        console.log('[MarketSSE] ✅ Connected to SSE stream!')
+    // Listen for WS status changes
+    const unsubStatus = wsClient.onStatusChange((wsStatus: WSStatus) => {
+      if (wsStatus === 'connected') {
         this._status = 'connected'
-        this.reconnectAttempts = 0
         this.consecutiveErrors = 0
         this.notifyStatusHandlers()
-
-        // Stop REST fallback since SSE is connected
         this.stopRestPolling()
-      }
-
-      // Handle 'initial' event - full data dump
-      this.eventSource.addEventListener('initial', (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data)
-          this.handleDataUpdate(data)
-        } catch {}
-      })
-
-      // Handle 'update' event - incremental updates
-      this.eventSource.addEventListener('update', (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data)
-          this.handleDataUpdate(data)
-        } catch {}
-      })
-
-      // Handle 'ping' event - keep-alive
-      this.eventSource.addEventListener('ping', () => {
-        // Connection is alive
-      })
-
-      this.eventSource.onerror = () => {
-        console.log('[MarketSSE] SSE connection error')
+        // Subscribe to market channel
+        wsClient.subscribe('market')
+      } else if (wsStatus === 'disconnected' || wsStatus === 'error') {
         this._status = 'disconnected'
-        this.eventSource?.close()
-        this.eventSource = null
         this.notifyStatusHandlers()
-
-        // Start REST fallback
         this.startRestPolling()
-
-        // Try to reconnect
-        this.scheduleReconnect()
       }
+    })
+    this.wsCleanupFns.push(unsubStatus)
 
-    } catch (err) {
-      console.warn('[MarketSSE] Failed to connect:', err)
-      this.startRestPolling()
-      this.scheduleReconnect()
-    }
+    // Listen for market:initial (first cached data)
+    const unsubInitial = wsClient.on('market:initial', (data) => {
+      console.log('[MarketWS] Received initial data')
+      this.handleDataUpdate(data)
+    })
+    this.wsCleanupFns.push(unsubInitial)
+
+    // Listen for market:update (streaming updates)
+    const unsubUpdate = wsClient.on('market:update', (data) => {
+      this.handleDataUpdate(data)
+    })
+    this.wsCleanupFns.push(unsubUpdate)
 
     // Also start market status check
     this.checkMarketStatus()
     if (this.marketStatusTimer) clearInterval(this.marketStatusTimer)
     this.marketStatusTimer = setInterval(() => {
       void this.checkMarketStatus()
-    }, 120000) // 2min — status rarely changes, and /api/market/status has 10s server cache
+    }, 120000)
   }
 
   disconnect() {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
-    }
-    if (this.eventSource) {
-      this.eventSource.close()
-      this.eventSource = null
-    }
+    // Cleanup WS handlers
+    for (const fn of this.wsCleanupFns) fn()
+    this.wsCleanupFns = []
+    // Unsubscribe from WS market channel
+    wsClient.unsubscribe('market')
+
     this.stopRestPolling()
     if (this.marketStatusTimer) {
       clearInterval(this.marketStatusTimer)
@@ -275,17 +250,7 @@ class MarketDataManager {
     }
   }
 
-  private scheduleReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) return
-
-    this.reconnectAttempts++
-    const delay = Math.min(2000 * Math.pow(1.5, this.reconnectAttempts - 1), 30000)
-
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null
-      this.connect()
-    }, delay)
-  }
+  // Reconnect is handled by wsClient singleton — no need for local reconnect logic
 
   // ─── REST Polling Fallback ────────────────────────────────────────
 
@@ -386,7 +351,7 @@ class MarketDataManager {
 
   private async checkMarketStatus() {
     try {
-      const res = await fetch('/api/market/status', {
+      const res = await fetch('https://pepertect-api.onrender.com/api/market/status', {
         cache: 'no-store',
         headers: { 'Cache-Control': 'no-cache' },
       })

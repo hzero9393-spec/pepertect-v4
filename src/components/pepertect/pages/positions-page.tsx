@@ -37,6 +37,7 @@ import { useAppStore } from '@/lib/store'
 import { toast } from 'sonner'
 import { formatINR, formatINRWhole, formatPrice, formatPnL, formatPercent } from '@/lib/format'
 import { useStockData } from '@/hooks/use-market-data'
+import { wsClient } from '@/lib/ws-client'
 import dynamic from 'next/dynamic'
 const StrikeOverviewDrawer = dynamic(
   () => import('@/components/pepertect/ui/strike-overview-drawer').then(m => ({ default: m.StrikeOverviewDrawer })),
@@ -860,8 +861,8 @@ export function PositionsPage() {
   const positionsRef = useRef<PositionData[]>([])
   positionsRef.current = positions
 
-  // Track OC SSE connections by combo key ("NIFTY::2026-07-07")
-  const ocSourcesRef = useRef<Map<string, EventSource>>(new Map())
+  // Track OC WS cleanup functions by combo key ("NIFTY::2026-07-07")
+  const ocCleanupRef = useRef<Map<string, (() => void)[]>>(new Map())
 
   // ─── Update EQUITY live prices from WebSocket stock quotes ──────
   // Only EQUITY segment uses wsStockQuotes. OPTIONS use OC SSE (below),
@@ -951,111 +952,92 @@ export function PositionsPage() {
     return () => {}
   }, [fetchPositions])
 
-  // ─── SSE Position Stream (EQUITY prices + exit events) ──────
-  // Server pushes EQUITY live prices + exit events.
-  // OPTIONS prices come from OC SSE (separate effect below).
+  // ─── WS Position Stream (EQUITY prices + exit events) ──────
+  // Server pushes EQUITY live prices + exit events via WebSocket.
+  // OPTIONS prices come from OC WS (separate effect below).
   useEffect(() => {
     if (!token) return
 
-    const eventSource = new EventSource('/api/positions/stream')
+    // Subscribe to positions channel
+    wsClient.subscribe('positions')
 
-    eventSource.addEventListener('message', (event: MessageEvent) => {
-      try {
-        const msg = JSON.parse(event.data)
+    // Listen for position updates
+    const unsubPositions = wsClient.on('positions', (data) => {
+      if (!data) return
 
-        if (msg.type === 'positions' && msg.data) {
-          const priceUpdates: Record<string, number> = {}
-          const pnlUpdates: Record<string, number> = {}
-          const exitEvents: Record<string, { reason: string; exitPrice: number; pnl: number; timestamp: number }> = {}
+      const priceUpdates: Record<string, number> = {}
+      const pnlUpdates: Record<string, number> = {}
+      const exitEvents: Record<string, { reason: string; exitPrice: number; pnl: number; timestamp: number }> = {}
 
-          for (const update of msg.data) {
-            // OPTIONS: price comes from OC SSE — skip server price, only handle exits
-            if (update.segment === 'OPTIONS') {
-              if (update.exitEvent) {
-                exitEvents[update.positionId] = update.exitEvent
-              }
-              continue
-            }
-
-            // EQUITY / FUTURES: use server price
-            const prevLive = livePricesRef.current[update.positionId]
-            if (prevLive !== undefined && prevLive !== update.currentPrice) {
-              prevPricesRef.current[update.positionId] = prevLive
-            }
-
-            priceUpdates[update.positionId] = update.currentPrice
-            pnlUpdates[update.positionId] = update.unrealizedPnl
-
-            if (update.exitEvent) {
-              exitEvents[update.positionId] = update.exitEvent
-            }
+      for (const update of data) {
+        // OPTIONS: price comes from OC WS — skip server price, only handle exits
+        if (update.segment === 'OPTIONS') {
+          if (update.exitEvent) {
+            exitEvents[update.positionId] = update.exitEvent
           }
-
-          if (Object.keys(priceUpdates).length > 0) {
-            livePricesRef.current = { ...livePricesRef.current, ...priceUpdates }
-            setLivePrices(prev => ({ ...prev, ...priceUpdates }))
-            setPrevPnlMap(prev => ({ ...prev, ...pnlUpdates }))
-            setPositions(prev => prev.map(pos => {
-              if (priceUpdates[pos.id] !== undefined) {
-                return {
-                  ...pos,
-                  currentPrice: priceUpdates[pos.id],
-                  unrealizedPnl: pnlUpdates[pos.id] ?? pos.unrealizedPnl,
-                }
-              }
-              return pos
-            }))
-          }
-
-          // Handle exit events — show toast and refetch
-          for (const [posId, evt] of Object.entries(exitEvents)) {
-            const reasonLabel = evt.reason === 'STOP_LOSS' ? 'Stop Loss' : 'Target'
-            toast.success(`${reasonLabel} hit! Auto-exited @ ₹${evt.exitPrice}`, {
-              description: `P&L: ${formatPnL(evt.pnl)}`,
-              duration: 5000,
-            })
-            setTimeout(() => fetchPositions(), 500)
-          }
+          continue
         }
 
-        if (msg.type === 'exit' && msg.data) {
-          const evt = msg.data
-          const reasonLabel = evt.reason === 'STOP_LOSS' ? 'Stop Loss' : 'Target'
-          toast.success(`${reasonLabel} hit! ${evt.symbol} @ ₹${evt.exitPrice}`, {
-            description: `P&L: ${formatPnL(evt.pnl)}`,
-            duration: 5000,
-          })
-          setTimeout(() => fetchPositions(), 500)
+        // EQUITY / FUTURES: use server price
+        const prevLive = livePricesRef.current[update.positionId]
+        if (prevLive !== undefined && prevLive !== update.currentPrice) {
+          prevPricesRef.current[update.positionId] = prevLive
         }
-      } catch { /* ignore parse errors */ }
+
+        priceUpdates[update.positionId] = update.currentPrice
+        pnlUpdates[update.positionId] = update.unrealizedPnl
+
+        if (update.exitEvent) {
+          exitEvents[update.positionId] = update.exitEvent
+        }
+      }
+
+      if (Object.keys(priceUpdates).length > 0) {
+        livePricesRef.current = { ...livePricesRef.current, ...priceUpdates }
+        setLivePrices(prev => ({ ...prev, ...priceUpdates }))
+        setPrevPnlMap(prev => ({ ...prev, ...pnlUpdates }))
+        setPositions(prev => prev.map(pos => {
+          if (priceUpdates[pos.id] !== undefined) {
+            return {
+              ...pos,
+              currentPrice: priceUpdates[pos.id],
+              unrealizedPnl: pnlUpdates[pos.id] ?? pos.unrealizedPnl,
+            }
+          }
+          return pos
+        }))
+      }
+
+      // Handle exit events — show toast and refetch
+      for (const [posId, evt] of Object.entries(exitEvents)) {
+        const reasonLabel = evt.reason === 'STOP_LOSS' ? 'Stop Loss' : 'Target'
+        toast.success(`${reasonLabel} hit! Auto-exited @ ₹${evt.exitPrice}`, {
+          description: `P&L: ${formatPnL(evt.pnl)}`,
+          duration: 5000,
+        })
+        setTimeout(() => fetchPositions(), 500)
+      }
     })
 
-    eventSource.onerror = () => {
-      // EventSource auto-reconnects, but if it fails permanently,
-      // fall back to 5s polling
-      console.log('[Positions] SSE error — falling back to polling')
-      const fallbackInterval = setInterval(fetchPositions, 5000)
-      const reconnectTimer = setTimeout(() => {
-        clearInterval(fallbackInterval)
-      }, 30000)
-      eventSource.close = () => {
-        clearInterval(fallbackInterval)
-        clearTimeout(reconnectTimer)
-      }
-    }
+    // Listen for exit events
+    const unsubExit = wsClient.on('exit', (evt) => {
+      if (!evt) return
+      const reasonLabel = evt.reason === 'STOP_LOSS' ? 'Stop Loss' : 'Target'
+      toast.success(`${reasonLabel} hit! ${evt.symbol} @ ₹${evt.exitPrice}`, {
+        description: `P&L: ${formatPnL(evt.pnl)}`,
+        duration: 5000,
+      })
+      setTimeout(() => fetchPositions(), 500)
+    })
 
     return () => {
-      eventSource.close()
+      unsubPositions()
+      unsubExit()
+      wsClient.unsubscribe('positions')
     }
   }, [token, fetchPositions])
 
-  // ─── OPTIONS: Subscribe to Option Chain SSE for real-time strike LTP ──
-  // Instead of server making separate API calls, we subscribe directly to
-  // the option chain stream and extract our strike's LTP from the data.
-  //
-  // Uses a memoized combo key string so the effect only re-runs when the
-  // actual underlying+expiry combos change (new trade, close, expiry change).
-  // This prevents OC EventSources from being torn down on every price tick.
+  // ─── OPTIONS: Subscribe to Option Chain WS for real-time strike LTP ──
 
   const ocComboStr = useMemo(() => {
     const keys = new Set<string>()
@@ -1070,29 +1052,30 @@ export function PositionsPage() {
 
   useEffect(() => {
     if (!marketOpen) {
-      // Close all OC subscriptions when market closes
-      for (const es of ocSourcesRef.current.values()) es.close()
-      ocSourcesRef.current.clear()
+      for (const [key, cleanups] of ocCleanupRef.current) {
+        cleanups.forEach(fn => fn())
+      }
+      ocCleanupRef.current.clear()
       return
     }
 
     const neededKeys = new Set(ocComboStr.split(',').filter(Boolean))
 
-    // Close OC sources no longer needed
-    for (const [key, es] of ocSourcesRef.current) {
+    // Cleanup OC subs no longer needed
+    for (const [key, cleanups] of ocCleanupRef.current) {
       if (!neededKeys.has(key)) {
-        es.close()
-        ocSourcesRef.current.delete(key)
+        cleanups.forEach(fn => fn())
+        ocCleanupRef.current.delete(key)
       }
     }
 
-    // Create OC sources for new combos
+    // Create OC subscriptions for new combos
     for (const key of neededKeys) {
-      if (ocSourcesRef.current.has(key)) continue
+      if (ocCleanupRef.current.has(key)) continue
       const [underlying, expiry] = key.split('::')
-      const es = new EventSource(`/api/options/stream?underlying=${underlying}&expiry=${expiry}`)
 
-      // Batch OC updates with rAF to avoid multiple React re-renders per frame
+      wsClient.subscribe('options', { underlying, expiry })
+
       let rafId: number | null = null
       const pendingPrices: Record<string, number> = {}
       const pendingPnls: Record<string, number> = {}
@@ -1101,7 +1084,6 @@ export function PositionsPage() {
         rafId = null
         const prices = { ...pendingPrices }
         const pnls = { ...pendingPnls }
-        // Clear pending
         for (const k of Object.keys(pendingPrices)) delete pendingPrices[k]
         for (const k of Object.keys(pendingPnls)) delete pendingPnls[k]
 
@@ -1115,16 +1097,14 @@ export function PositionsPage() {
         }
       }
 
-      es.addEventListener('message', (event: MessageEvent) => {
+      const unsub = wsClient.on('options:update', (msg) => {
         try {
-          const msg = JSON.parse(event.data)
-          if (msg.type !== 'update' || !msg.data?.strikes) return
+          if (!msg?.strikes) return
 
-          const strikes: any[] = msg.data.strikes
+          const strikes: any[] = msg.strikes
           let hasChanges = false
 
-          // Cache OC data for strike overview (instrumentKey, greeks, marketData)
-          const spot = msg.data.spot || 0
+          const spot = msg.spot || 0
           for (const s of strikes) {
             const ceKey = `${underlying}::${expiry}::${s.strike_price}::CE`
             const peKey = `${underlying}::${expiry}::${s.strike_price}::PE`
@@ -1142,12 +1122,10 @@ export function PositionsPage() {
             })
           }
 
-          // Match strikes against our option positions (read from ref for freshness)
           const currentPositions = positionsRef.current
           for (const pos of currentPositions) {
             if (!pos.isOpen || pos.segment !== 'OPTIONS' || !pos.strikePrice) continue
 
-            // Check this position belongs to this OC combo
             const posExpiry = pos.expiryDate ? new Date(pos.expiryDate).toISOString().split('T')[0] : null
             if (pos.symbol.toUpperCase() !== underlying || posExpiry !== expiry) continue
 
@@ -1176,21 +1154,20 @@ export function PositionsPage() {
             }
           }
 
-          if (hasChanges) {
-            // Batch the state update into the next animation frame
-            if (!rafId) {
-              rafId = requestAnimationFrame(flushUpdates)
-            }
+          if (hasChanges && !rafId) {
+            rafId = requestAnimationFrame(flushUpdates)
           }
         } catch { /* ignore parse errors */ }
       })
 
-      ocSourcesRef.current.set(key, es)
+      ocCleanupRef.current.set(key, [unsub])
     }
 
     return () => {
-      for (const es of ocSourcesRef.current.values()) es.close()
-      ocSourcesRef.current.clear()
+      for (const [key, cleanups] of ocCleanupRef.current) {
+        cleanups.forEach(fn => fn())
+      }
+      ocCleanupRef.current.clear()
     }
   }, [ocComboStr, marketOpen])
 

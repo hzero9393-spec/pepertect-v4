@@ -1,130 +1,74 @@
 'use client'
 
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAuthStore } from '@/lib/auth-store'
+import { wsClient, type WSStatus } from '@/lib/ws-client'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-interface ServerMessage {
-  type: string
-  data?: any
-}
-
-type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
-
 interface UsePepertectWS {
-  status: ConnectionStatus
-  lastMessage: ServerMessage | null
-  subscribe: (channels: string[]) => void
-  unsubscribe: (channels: string[]) => void
+  status: WSStatus
+  subscribe: (channel: string, params?: any) => void
+  unsubscribe: (channel: string) => void
   send: (msg: any) => void
   reconnect: () => void
+  /** Listen to a specific message type. Returns cleanup function. */
+  on: (type: string, handler: (data: any) => void) => () => void
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────
 
 export function usePepertectWS(): UsePepertectWS {
   const token = useAuthStore(s => s.token)
-  const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
-  const [status, setStatus] = useState<ConnectionStatus>('disconnected')
-  const [lastMessage, setLastMessage] = useState<ServerMessage | null>(null)
-  const subscribedRef = useRef<Set<string>>(new Set())
+  const [status, setStatus] = useState<WSStatus>(wsClient.getStatus())
+  const cleanupRef = useRef<(() => void)[]>([])
 
-  // In production: wss://pepertect-server.onrender.com
-  // In development: ws://localhost:4000
-  const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:4000'
-
-  const connect = useCallback(() => {
-    if (!token || wsRef.current?.readyState === WebSocket.OPEN) return
-
-    setStatus('connecting')
-
-    try {
-      const ws = new WebSocket(`${WS_URL}/ws?token=${token}`)
-
-      ws.onopen = () => {
-        setStatus('connected')
-        console.log('[WS] Connected to Pepertect server')
-
-        // Re-subscribe to previous channels after reconnect
-        if (subscribedRef.current.size > 0) {
-          ws.send(JSON.stringify({
-            type: 'subscribe',
-            channels: [...subscribedRef.current],
-          }))
-        }
-      }
-
-      ws.onmessage = (event) => {
-        try {
-          const msg: ServerMessage = JSON.parse(event.data)
-          setLastMessage(msg)
-        } catch {}
-      }
-
-      ws.onclose = () => {
-        setStatus('disconnected')
-        wsRef.current = null
-        // Auto-reconnect after 3s if we still have a token
-        if (token) {
-          reconnectTimer.current = setTimeout(() => connect(), 3000)
-        }
-      }
-
-      ws.onerror = () => {
-        setStatus('error')
-      }
-
-      wsRef.current = ws
-    } catch {
-      setStatus('error')
-      reconnectTimer.current = setTimeout(() => connect(), 5000)
-    }
-  }, [token, WS_URL])
-
-  const disconnect = useCallback(() => {
-    clearTimeout(reconnectTimer.current)
-    if (wsRef.current) {
-      wsRef.current.onclose = null // prevent auto-reconnect on intentional close
-      wsRef.current.close()
-      wsRef.current = null
-    }
-    setStatus('disconnected')
+  // Sync status from singleton
+  useEffect(() => {
+    const cleanup = wsClient.onStatusChange(setStatus)
+    return cleanup
   }, [])
 
-  const subscribe = useCallback((channels: string[]) => {
-    for (const ch of channels) subscribedRef.current.add(ch)
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'subscribe', channels }))
+  // Connect / disconnect based on token
+  useEffect(() => {
+    if (token) {
+      wsClient.connect(token)
+    } else {
+      wsClient.disconnect()
     }
+    // Cleanup all on-message handlers on unmount
+    return () => {
+      for (const fn of cleanupRef.current) fn()
+      cleanupRef.current = []
+    }
+  }, [token])
+
+  const on = useCallback((type: string, handler: (data: any) => void) => {
+    const cleanup = wsClient.on(type, handler)
+    cleanupRef.current.push(cleanup)
+    return cleanup
   }, [])
 
-  const unsubscribe = useCallback((channels: string[]) => {
-    for (const ch of channels) subscribedRef.current.delete(ch)
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'unsubscribe', channels }))
-    }
+  const subscribe = useCallback((channel: string, params?: any) => {
+    wsClient.subscribe(channel, params)
+  }, [])
+
+  const unsubscribe = useCallback((channel: string) => {
+    wsClient.unsubscribe(channel)
   }, [])
 
   const send = useCallback((msg: any) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg))
-    }
+    wsClient.send(msg)
   }, [])
 
   const reconnect = useCallback(() => {
-    disconnect()
-    setTimeout(() => connect(), 500)
-  }, [connect, disconnect])
+    if (token) {
+      wsClient.disconnect()
+      setTimeout(() => wsClient.connect(token), 500)
+    }
+  }, [token])
 
-  // Connect on mount if token exists, disconnect on unmount
-  useEffect(() => {
-    if (token) connect()
-    return () => disconnect()
-  }, [token, connect, disconnect])
-
-  return { status, lastMessage, subscribe, unsubscribe, send, reconnect }
+  return { status, subscribe, unsubscribe, send, reconnect, on }
 }
 
 // ─── Channel Constants ─────────────────────────────────────────────────────
@@ -132,6 +76,5 @@ export function usePepertectWS(): UsePepertectWS {
 export const WS_CHANNELS = {
   MARKET: 'market',
   POSITIONS: 'positions',
-  /** e.g. 'oc:NIFTY::2026-07-07' */
-  optionChain: (underlying: string, expiry: string) => `oc:${underlying}::${expiry}`,
+  OPTIONS: 'options',
 } as const

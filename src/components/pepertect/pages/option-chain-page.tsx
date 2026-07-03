@@ -9,6 +9,7 @@ import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
 import { StrikeOverviewDrawer } from '@/components/pepertect/ui/strike-overview-drawer'
 import { X, Minus, Plus, ChevronDown } from 'lucide-react'
+import { wsClient } from '@/lib/ws-client'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ export function OptionChainPage() {
   const [live, setLive] = useState(false)
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState<ViewMode>('LTP')
-  const esRef = useRef<EventSource | null>(null)
+  // WebSocket connection managed by wsClient singleton
   const tableBodyRef = useRef<HTMLDivElement>(null)
   const scrolledOnce = useRef(false)
 
@@ -189,44 +190,19 @@ export function OptionChainPage() {
   useEffect(() => {
     if (!expiry) return
 
-    let es: EventSource | null = null
-    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
     let cancelled = false
 
-    const connect = () => {
-      if (cancelled) return
-      es?.close()
+    wsClient.subscribe('options', { underlying: index, expiry })
 
-      es = new EventSource(`/api/options/stream?underlying=${index}&expiry=${encodeURIComponent(expiry)}`)
-      esRef.current = es
-
-      es.onopen = () => {
-        setLive(true)
-      }
-
-      es.onmessage = (e) => {
-        try {
-          const msg = JSON.parse(e.data)
-          if (msg.type === 'update' && msg.data) setData(msg.data)
-        } catch { /* */ }
-      }
-
-      es.onerror = () => {
-        setLive(false)
-        // Auto-reconnect after 500ms (not instant to avoid hammering)
-        if (!cancelled) {
-          reconnectTimeout = setTimeout(connect, 500)
-        }
-      }
-    }
-
-    connect()
+    const unsub = wsClient.on('options:update', (msg) => {
+      if (!cancelled && msg) setData(msg)
+    })
+    setLive(true)
 
     return () => {
       cancelled = true
-      if (reconnectTimeout) clearTimeout(reconnectTimeout)
-      es?.close()
-      esRef.current = null
+      unsub()
+      wsClient.unsubscribe('options')
       setLive(false)
     }
   }, [index, expiry])

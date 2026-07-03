@@ -44,7 +44,7 @@ export function IndexTicker() {
   useEffect(() => {
     async function fetchStatus() {
       try {
-        const res = await fetch('/api/market/status')
+        const res = await fetch('https://pepertect-api.onrender.com/api/market/status')
         const data = await res.json()
         if (data.success) setMarketStatus(data.data)
       } catch {
