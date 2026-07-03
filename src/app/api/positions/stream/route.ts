@@ -66,7 +66,7 @@ interface OC_CACHE_ENTRY {
 }
 
 const ocDirectCache = new Map<string, OC_CACHE_ENTRY>()
-const OC_FETCH_INTERVAL = 2000 // Fetch at most once every 2 seconds per key
+const OC_FETCH_INTERVAL = 3000 // Fetch at most once every 3 seconds per key
 let ocFetchInProgress = new Set<string>() // Deduplicate concurrent fetches
 
 /**
@@ -345,7 +345,7 @@ export async function GET(request: Request) {
     } catch { /* next cycle */ }
 
     if (running) {
-      setTimeout(pollPositions, 500)
+      setTimeout(pollPositions, 1500)
     }
   }
 

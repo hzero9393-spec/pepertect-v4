@@ -150,10 +150,10 @@ class OptionChainManager {
     // Fetch immediately
     this.fetchAndBroadcast(underlying, expiry)
 
-    // Then every 500ms for near real-time data
+    // Then every 1000ms for near real-time data
     const timer = setInterval(() => {
       this.fetchAndBroadcast(underlying, expiry)
-    }, 500)
+    }, 1000)
 
     this.pollTimers.set(key, timer)
   }
@@ -207,7 +207,7 @@ class OptionChainManager {
       let maxPainStrike = 0
       const cachedMP = this.maxPainCache.get(key)
       const spotDelta = cachedMP ? Math.abs(spot - cachedMP.spotAtCalc) : Infinity
-      if (cachedMP && spotDelta <= 5) {
+      if (cachedMP && spotDelta <= 20) {
         maxPainStrike = cachedMP.strike
       } else {
         let maxBuyerLoss = 0
