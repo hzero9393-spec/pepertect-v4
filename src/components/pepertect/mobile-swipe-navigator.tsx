@@ -1,7 +1,21 @@
 'use client'
 
-import { useRef, useCallback, useEffect, type ReactNode } from 'react'
+import { useRef, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useAppStore, type PageId } from '@/lib/store'
+
+// Detect mobile viewport (< 768px) — used to skip swipe wrapper on desktop
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  )
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 767px)')
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  }, [])
+  return isMobile
+}
 
 // Pages in swipe order (same as mobile nav bar)
 const SWIPE_PAGES: PageId[] = ['dashboard', 'trading', 'watchlist', 'positions', 'orders']
@@ -209,8 +223,10 @@ export function MobileSwipeNavigator({ children }: { children: ReactNode }) {
     return () => cancelAnimationFrame(rafId.current)
   }, [])
 
-  // Non-swipeable pages: pass through
-  if (!isSwipeable) return <>{children}</>
+  const isMobile = useIsMobile()
+
+  // Non-swipeable pages OR desktop: pass through without wrapper
+  if (!isSwipeable || !isMobile) return <>{children}</>
 
   return (
     <div
@@ -218,7 +234,6 @@ export function MobileSwipeNavigator({ children }: { children: ReactNode }) {
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="md:hidden"
       style={{ touchAction: 'pan-y', overflow: 'hidden' }}
     >
       <div
