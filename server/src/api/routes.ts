@@ -173,4 +173,108 @@ router.get('/options/expiries', (req: Request, res: Response) => {
   res.json({ success: true, data: expiries })
 })
 
+// ─── Debug: Option Chain Test ─────────────────────────────────────────
+
+const INDEX_KEYS: Record<string, string> = {
+  NIFTY: 'NSE_INDEX|Nifty 50',
+  BANKNIFTY: 'NSE_INDEX|Nifty Bank',
+  FINNIFTY: 'NSE_INDEX|Nifty Fin Service',
+  SENSEX: 'BSE_INDEX|SENSEX',
+}
+
+router.get('/debug/option-chain', async (req: Request, res: Response) => {
+  const underlying = (req.query.underlying || 'NIFTY').toString().toUpperCase()
+  const instrumentKey = INDEX_KEYS[underlying]
+  if (!instrumentKey) {
+    return res.status(400).json({ error: `Unknown underlying: ${underlying}` })
+  }
+
+  const token = process.env.UPSTOX_ACCESS_TOKEN
+  const hasToken = !!token
+  const tokenPrefix = token ? token.substring(0, 8) + '...' : 'NOT SET'
+
+  const result: any = {
+    underlying,
+    instrumentKey,
+    hasUpstoxToken: hasToken,
+    tokenPrefix,
+    timestamp: new Date().toISOString(),
+  }
+
+  if (!hasToken) {
+    result.error = 'UPSTOX_ACCESS_TOKEN environment variable is NOT set on this server'
+    return res.json({ success: false, data: result })
+  }
+
+  // Get next expiry
+  const expiries = getExpiryDates(underlying)
+  const expiry = expiries[0] || ''
+  result.expiry = expiry
+
+  if (!expiry) {
+    result.error = 'No expiry dates found'
+    return res.json({ success: false, data: result })
+  }
+
+  // Test fetch from Upstox
+  try {
+    const url = `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(instrumentKey)}&expiry_date=${encodeURIComponent(expiry)}`
+    const fetchStart = Date.now()
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    })
+    const fetchTime = Date.now() - fetchStart
+
+    result.apiStatus = res.status
+    result.apiStatusText = res.statusText
+    result.fetchTimeMs = fetchTime
+
+    const text = await res.text()
+    result.responseLength = text.length
+    result.responsePreview = text.substring(0, 500)
+
+    if (!res.ok) {
+      result.error = `Upstox API returned ${res.status}`
+      return res.status(200).json({ success: false, data: result })
+    }
+
+    try {
+      const json = JSON.parse(text)
+      const chainData = json?.data || []
+      result.strikeCount = chainData.length
+      result.upstoxStatus = json?.status
+
+      if (chainData.length > 0) {
+        result.spotPrice = chainData[0].underlying_spot_price
+        result.firstStrike = chainData[0].strike_price
+        result.lastStrike = chainData[chainData.length - 1].strike_price
+        result.sampleStrike = {
+          strike: chainData[0].strike_price,
+          ce_ltp: chainData[0]?.call_options?.market_data?.ltp,
+          ce_oi: chainData[0]?.call_options?.market_data?.oi,
+          ce_bid: chainData[0]?.call_options?.market_data?.bid_price,
+          ce_ask: chainData[0]?.call_options?.market_data?.ask_price,
+          pe_ltp: chainData[0]?.put_options?.market_data?.ltp,
+          pe_oi: chainData[0]?.put_options?.market_data?.oi,
+          pe_bid: chainData[0]?.put_options?.market_data?.bid_price,
+          pe_ask: chainData[0]?.put_options?.market_data?.ask_price,
+        }
+        result.success = true
+      } else {
+        result.error = 'Chain data array is empty'
+        result.fullStatus = json?.status
+        result.fullResponse = text.substring(0, 1000)
+      }
+    } catch (parseErr) {
+      result.error = 'Failed to parse JSON response'
+      result.rawResponse = text.substring(0, 500)
+    }
+  } catch (err: any) {
+    result.error = `Fetch failed: ${err.message}`
+  }
+
+  res.json({ success: !result.error, data: result })
+})
+
 export default router

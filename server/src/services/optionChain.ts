@@ -112,6 +112,7 @@ export class OptionChainService {
 
   addClient(client: ClientConnection, underlying: string, expiry: string) {
     const key = `${underlying.toUpperCase()}::${expiry}`
+    console.log(`[OC Service] addClient: ${key}, existing subs: ${this.subscriptions.get(key)?.size || 0}`)
 
     if (!this.subscriptions.has(key)) {
       this.subscriptions.set(key, new Set())
@@ -121,7 +122,14 @@ export class OptionChainService {
     // Send latest data immediately
     const cached = this.latestData.get(key)
     if (cached) {
-      client.ws.send(JSON.stringify({ type: 'options:update', data: cached }))
+      try {
+        client.ws.send(JSON.stringify({ type: 'options:update', data: cached }))
+        console.log(`[OC Service] Sent cached data for ${key}, strikes: ${cached.strikes.length}, spot: ${cached.spot}`)
+      } catch (err) {
+        console.error(`[OC Service] Failed to send cached data:`, err)
+      }
+    } else {
+      console.log(`[OC Service] No cached data for ${key}, starting fresh poll`)
     }
 
     // Start polling if first subscriber
@@ -157,12 +165,25 @@ export class OptionChainService {
     if (timer) { clearInterval(timer); this.pollTimers.delete(key) }
   }
 
+  private fetchErrorLogged = new Map<string, number>() // key → timestamp of last logged error
+
   private async fetchAndBroadcast(underlying: string, expiry: string) {
     const config = INDEX_CONFIGS[underlying.toUpperCase()]
-    if (!config) return
+    if (!config) {
+      console.error(`[OC Service] No config for underlying: ${underlying}`)
+      return
+    }
 
     const token = process.env.UPSTOX_ACCESS_TOKEN
-    if (!token) return
+    if (!token) {
+      const key = `${underlying.toUpperCase()}::${expiry}`
+      const now = Date.now()
+      if (!this.fetchErrorLogged.get(key) || now - this.fetchErrorLogged.get(key)! > 30000) {
+        console.error(`[OC Service] UPSTOX_ACCESS_TOKEN is not set! Option chain cannot fetch.`)
+        this.fetchErrorLogged.set(key, now)
+      }
+      return
+    }
 
     const key = `${underlying.toUpperCase()}::${expiry}`
 
@@ -173,14 +194,37 @@ export class OptionChainService {
       const url = `${'https://api.upstox.com/v2'}/option/chain?instrument_key=${encodeURIComponent(config.instrumentKey)}&expiry_date=${encodeURIComponent(expiry)}`
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(5000),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        const now = Date.now()
+        if (!this.fetchErrorLogged.get(key) || now - this.fetchErrorLogged.get(key)! > 30000) {
+          const body = await res.text().catch(() => 'unreadable')
+          console.error(`[OC Service] Upstox API ${res.status} for ${key}: ${body.substring(0, 200)}`)
+          this.fetchErrorLogged.set(key, now)
+        }
+        return
+      }
       const json: any = await res.json()
-      if (json?.status === 'error') return
+      if (json?.status === 'error') {
+        const now = Date.now()
+        if (!this.fetchErrorLogged.get(key) || now - this.fetchErrorLogged.get(key)! > 30000) {
+          console.error(`[OC Service] Upstox error response for ${key}:`, JSON.stringify(json).substring(0, 200))
+          this.fetchErrorLogged.set(key, now)
+        }
+        return
+      }
+      this.fetchErrorLogged.delete(key) // clear error log on success
 
       const chainData: OCStrike[] = json?.data || []
-      if (chainData.length === 0) return
+      if (chainData.length === 0) {
+        const now = Date.now()
+        if (!this.fetchErrorLogged.get(key) || now - this.fetchErrorLogged.get(key)! > 30000) {
+          console.warn(`[OC Service] Empty chain data for ${key}. Full response:`, JSON.stringify(json).substring(0, 300))
+          this.fetchErrorLogged.set(key, now)
+        }
+        return
+      }
 
       const spot = chainData[0].underlying_spot_price || 0
       const totalCallOI = chainData.reduce((s, c) => s + (c.call_options?.market_data?.oi || 0), 0)
@@ -228,8 +272,12 @@ export class OptionChainService {
           }
         }
       }
-    } catch {
-      // Silently continue
+    } catch (err) {
+      const now = Date.now()
+      if (!this.fetchErrorLogged.get(key) || now - this.fetchErrorLogged.get(key)! > 30000) {
+        console.error(`[OC Service] Fetch error for ${key}:`, err)
+        this.fetchErrorLogged.set(key, now)
+      }
     } finally {
       this.fetchInProgress.delete(key)
     }
