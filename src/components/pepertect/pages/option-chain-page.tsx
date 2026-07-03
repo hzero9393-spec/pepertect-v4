@@ -7,6 +7,7 @@ import { useAppStore } from '@/lib/store'
 import { formatINR, formatINRWhole, formatPrice, formatPercent } from '@/lib/format'
 import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
+import { StrikeOverviewDrawer } from '@/components/pepertect/ui/strike-overview-drawer'
 import { X, Minus, Plus, ChevronDown } from 'lucide-react'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -15,18 +16,20 @@ interface OCStrike {
   strike_price: number
   underlying_spot_price: number
   call_options: {
+    instrument_key: string
     market_data: {
       ltp: number; volume: number; oi: number; close_price: number
       bid_price: number; bid_qty: number; ask_price: number; ask_qty: number; prev_oi: number
     }
-    option_greeks: { iv: number; delta: number; theta: number; vega: number; gamma: number }
+    option_greeks: { iv: number; delta: number; theta: number; vega: number; gamma: number; pop: number }
   }
   put_options: {
+    instrument_key: string
     market_data: {
       ltp: number; volume: number; oi: number; close_price: number
       bid_price: number; bid_qty: number; ask_price: number; ask_qty: number; prev_oi: number
     }
-    option_greeks: { iv: number; delta: number; theta: number; vega: number; gamma: number }
+    option_greeks: { iv: number; delta: number; theta: number; vega: number; gamma: number; pop: number }
   }
 }
 
@@ -140,6 +143,14 @@ export function OptionChainPage() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmData, setConfirmData] = useState<TradeConfirmData | null>(null)
   const [executing, setExecuting] = useState(false)
+
+  // Strike overview state
+  const [strikeOverview, setStrikeOverview] = useState<{
+    underlying: string
+    strike: number
+    optionType: 'CE' | 'PE'
+    instrumentKey: string
+  } | null>(null)
 
   const token = useAuthStore(s => s.token)
   const userData = useAuthStore(s => s.user)
@@ -571,7 +582,12 @@ export function OptionChainPage() {
                         <button
                           className="text-[12px] font-bold text-right cursor-pointer hover:opacity-70 transition-opacity w-16"
                           style={{ color: C.text }}
-                          onClick={() => openTrade('CE', s.strike_price, ce.ltp, 'BUY')}
+                          onClick={() => setStrikeOverview({
+                            underlying: index,
+                            strike: s.strike_price,
+                            optionType: 'CE',
+                            instrumentKey: s.call_options.instrument_key,
+                          })}
                         >
                           {fmtLtp(ce.ltp)}
                         </button>
@@ -601,7 +617,12 @@ export function OptionChainPage() {
                         <button
                           className="text-[12px] font-bold cursor-pointer hover:opacity-70 transition-opacity w-16"
                           style={{ color: C.text }}
-                          onClick={() => openTrade('PE', s.strike_price, pe.ltp, 'BUY')}
+                          onClick={() => setStrikeOverview({
+                            underlying: index,
+                            strike: s.strike_price,
+                            optionType: 'PE',
+                            instrumentKey: s.put_options.instrument_key,
+                          })}
                         >
                           {fmtLtp(pe.ltp)}
                         </button>
@@ -907,6 +928,33 @@ export function OptionChainPage() {
         onConfirm={executeTrade}
         onSuccess={() => useAppStore.getState().setCurrentPage('positions')}
       />
+
+      {/* ═══ Strike Overview Drawer ═══════════════════════════════════════ */}
+      {strikeOverview && (() => {
+        const strikeData = data?.strikes.find(s => s.strike_price === strikeOverview.strike)
+        if (!strikeData) return null
+        const optData = strikeOverview.optionType === 'CE' ? strikeData.call_options : strikeData.put_options
+        if (!optData) return null
+        return (
+          <StrikeOverviewDrawer
+            open={!!strikeOverview}
+            onOpenChange={(open) => { if (!open) setStrikeOverview(null) }}
+            underlying={strikeOverview.underlying}
+            strike={strikeOverview.strike}
+            optionType={strikeOverview.optionType}
+            expiry={data?.expiry || expiry}
+            instrumentKey={strikeOverview.instrumentKey}
+            ltp={optData.market_data.ltp}
+            greeks={optData.option_greeks}
+            marketData={optData.market_data}
+            spot={data?.spot || 0}
+            onTrade={() => {
+              openTrade(strikeOverview.optionType, strikeOverview.strike, optData.market_data.ltp, 'BUY')
+              setStrikeOverview(null)
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }
