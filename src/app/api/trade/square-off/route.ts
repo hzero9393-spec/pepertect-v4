@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { authenticateRequest, calculateBrokerage } from '@/lib/trade-auth'
 import { cache, CacheKeys, CacheTTL } from '@/lib/cache'
 import { Prisma } from '@prisma/client'
-import { getOptionChainManager } from '@/lib/option-chain-manager'
+// Direct Upstox API fetch for options (reliable on serverless)
 
 export async function POST(request: NextRequest) {
   try {
@@ -71,31 +71,44 @@ export async function POST(request: NextRequest) {
       if (cached) {
         currentPrice = cached.ltp
       } else {
-        // Try option chain manager first (real-time)
+        // Direct Upstox API fetch (reliable on serverless, no singleton dependency)
         try {
-          const ocManager = getOptionChainManager()
-          const expiryMap = (ocManager as any).latestData as Map<string, any> | undefined
-          if (expiryMap && expiryMap.size > 0) {
-            const expiryStr = position.expiryDate ? new Date(position.expiryDate).toISOString().split('T')[0] : null
-            const upperSymbol = position.symbol.toUpperCase()
-            for (const [, data] of expiryMap) {
-              if (data.underlying === upperSymbol && data.strikes) {
-                if (expiryStr && data.expiry !== expiryStr) continue
-                const strike = data.strikes.find((s: any) => s.strike_price === position.strikePrice)
-                if (strike) {
-                  const optData = position.optionType === 'CE'
-                    ? strike.call_options?.market_data
-                    : strike.put_options?.market_data
-                  if (optData?.ltp && optData.ltp > 0) {
-                    currentPrice = optData.ltp
-                    cache.set(optCacheKey, { ltp: currentPrice }, CacheTTL.OPTION_PRICE)
-                    break
-                  }
+          const INSTRUMENT_KEYS: Record<string, string> = {
+            NIFTY: 'NSE_INDEX|Nifty 50',
+            BANKNIFTY: 'NSE_INDEX|Nifty Bank',
+            FINNIFTY: 'NSE_INDEX|Nifty Fin Service',
+            SENSEX: 'BSE_INDEX|SENSEX',
+          }
+          const upperSymbol = position.symbol.toUpperCase()
+          const instrumentKey = INSTRUMENT_KEYS[upperSymbol]
+          const token = process.env.UPSTOX_ACCESS_TOKEN
+
+          if (instrumentKey && token && position.expiryDate) {
+            const d = position.expiryDate instanceof Date ? position.expiryDate : new Date(position.expiryDate)
+            const expiryStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+
+            const url = `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(instrumentKey)}&expiry_date=${encodeURIComponent(expiryStr)}`
+            const res = await fetch(url, {
+              headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+              cache: 'no-store',
+              signal: AbortSignal.timeout(5000),
+            })
+            if (res.ok) {
+              const json = await res.json()
+              const chainData: any[] = json?.data || []
+              const strike = chainData.find((s: any) => s.strike_price === position.strikePrice)
+              if (strike) {
+                const optData = position.optionType === 'CE'
+                  ? strike.call_options?.market_data
+                  : strike.put_options?.market_data
+                if (optData?.ltp && optData.ltp > 0) {
+                  currentPrice = optData.ltp
+                  cache.set(optCacheKey, { ltp: currentPrice }, CacheTTL.OPTION_PRICE)
                 }
               }
             }
           }
-        } catch { /* ignore */ }
+        } catch { /* ignore, fall through to DB */ }
 
         // Fallback to DB with expiryDate filter
         if (currentPrice <= 0) {

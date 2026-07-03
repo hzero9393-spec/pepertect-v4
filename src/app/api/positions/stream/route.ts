@@ -5,6 +5,10 @@
  *
  * Pushes live price updates + P&L for all open positions every 500ms.
  * Also listens for auto-exit events and pushes them immediately.
+ *
+ * For OPTIONS: Directly fetches from Upstox API (no OC manager dependency)
+ * because on Vercel serverless, each API route runs on a separate instance
+ * and the OC manager singleton's data is not shared across instances.
  */
 
 import { authenticateRequest } from '@/lib/trade-auth'
@@ -12,7 +16,6 @@ import { db } from '@/lib/db'
 import { cache, CacheKeys, CacheTTL } from '@/lib/cache'
 import { getAutoExitWorker, type ExitEvent } from '@/lib/auto-exit-worker'
 import { getMarketDataManager } from '@/lib/market-data-manager'
-import { getOptionChainManager } from '@/lib/option-chain-manager'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -37,11 +40,126 @@ interface PositionUpdate {
   }
 }
 
-// Track which underlying+expiry combos we've ensured OC polling for (per SSE connection)
-const ensuredOcPolling = new Set<string>()
+// ─── Upstox Config ───────────────────────────────────────────────────────────
 
-// Store unsub functions for cleanup when SSE disconnects
-const ocUnsubs: (() => void)[] = []
+const UPSTOX_API_V2 = 'https://api.upstox.com/v2'
+
+const INDEX_INSTRUMENT_KEYS: Record<string, string> = {
+  NIFTY: 'NSE_INDEX|Nifty 50',
+  BANKNIFTY: 'NSE_INDEX|Nifty Bank',
+  FINNIFTY: 'NSE_INDEX|Nifty Fin Service',
+  SENSEX: 'BSE_INDEX|SENSEX',
+}
+
+// ─── Direct Option Chain Cache (per instance) ───────────────────────────────
+// On Vercel serverless, each SSE connection gets its own instance.
+// We cache the option chain response per underlying+expiry to avoid
+// hammering the Upstox API every 500ms.
+
+interface OC_CACHE_ENTRY {
+  strikes: Array<{
+    strike_price: number
+    call_options: { market_data: { ltp: number } } | null
+    put_options: { market_data: { ltp: number } } | null
+  }>
+  fetchedAt: number
+}
+
+const ocDirectCache = new Map<string, OC_CACHE_ENTRY>()
+const OC_FETCH_INTERVAL = 2000 // Fetch at most once every 2 seconds per key
+let ocFetchInProgress = new Set<string>() // Deduplicate concurrent fetches
+
+/**
+ * Fetch option chain directly from Upstox API and cache the result.
+ * Returns the cached/fresh strikes array or null on failure.
+ */
+async function fetchOptionChainDirect(
+  underlying: string,
+  expiry: string,
+): Promise<OC_CACHE_ENTRY['strikes'] | null> {
+  const cacheKey = `${underlying}::${expiry}`
+  const now = Date.now()
+
+  // Return cached if fresh enough
+  const cached = ocDirectCache.get(cacheKey)
+  if (cached && now - cached.fetchedAt < OC_FETCH_INTERVAL) {
+    return cached.strikes
+  }
+
+  // Deduplicate: skip if fetch already in flight for this key
+  if (ocFetchInProgress.has(cacheKey)) {
+    return cached?.strikes ?? null
+  }
+
+  const instrumentKey = INDEX_INSTRUMENT_KEYS[underlying.toUpperCase()]
+  if (!instrumentKey) return null
+
+  const token = process.env.UPSTOX_ACCESS_TOKEN
+  if (!token) return null
+
+  ocFetchInProgress.add(cacheKey)
+
+  try {
+    const url = `${UPSTOX_API_V2}/option/chain?instrument_key=${encodeURIComponent(instrumentKey)}&expiry_date=${encodeURIComponent(expiry)}`
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(3000),
+    })
+
+    if (!res.ok) return cached?.strikes ?? null
+
+    const json = await res.json()
+    if (json?.status === 'error') return cached?.strikes ?? null
+
+    const chainData: any[] = json?.data || []
+    if (chainData.length === 0) return cached?.strikes ?? null
+
+    // Extract only the fields we need (smaller cache footprint)
+    const strikes = chainData.map((s: any) => ({
+      strike_price: s.strike_price,
+      call_options: s.call_options
+        ? { market_data: { ltp: s.call_options.market_data?.ltp || 0 } }
+        : null,
+      put_options: s.put_options
+        ? { market_data: { ltp: s.put_options.market_data?.ltp || 0 } }
+        : null,
+    }))
+
+    const entry: OC_CACHE_ENTRY = { strikes, fetchedAt: now }
+    ocDirectCache.set(cacheKey, entry)
+
+    return strikes
+  } catch {
+    // On failure, return stale cache if available
+    return cached?.strikes ?? null
+  } finally {
+    ocFetchInProgress.delete(cacheKey)
+  }
+}
+
+// ─── Nearest Expiry Lookup (calendar-based, instant) ────────────────────────
+
+const EXPIRY_CACHE = new Map<string, string[]>()
+
+async function getNearestExpiry(underlying: string): Promise<string | null> {
+  let expiries = EXPIRY_CACHE.get(underlying)
+  if (!expiries) {
+    try {
+      const { getExpiryDates } = await import('@/lib/upstox-instruments')
+      expiries = await getExpiryDates(underlying)
+      if (expiries.length > 0) EXPIRY_CACHE.set(underlying, expiries)
+    } catch {
+      return null
+    }
+  }
+  return expiries?.[0] ?? null
+}
+
+// ─── Live Price Resolution ──────────────────────────────────────────────────
 
 async function getLivePrice(
   segment: string,
@@ -58,77 +176,43 @@ async function getLivePrice(
     const cached = cache.get<{ currentPrice: number }>(CacheKeys.stockPrice(symbol))
     if (cached?.currentPrice && cached.currentPrice > 0) return cached.currentPrice
   } else if (segment === 'OPTIONS' && optionType && strikePrice) {
-    const ocManager = getOptionChainManager()
     const upperSymbol = symbol.toUpperCase()
 
-    // ─── Normalize expiry from DB Date to YYYY-MM-DD string ───────
-    const expiryStr = expiryDate ? new Date(expiryDate).toISOString().split('T')[0] : null
+    // ─── Determine expiry to fetch ────────────────────────────────
+    // 1. Use the position's stored expiryDate
+    // 2. If missing, fall back to the nearest calendar expiry
+    let expiryStr: string | null = null
 
-    // ─── Ensure OC is polling for the position's specific expiry ──
-    // Key fix: subscribe per unique underlying+expiry combo, not just per underlying.
-    // This ensures that if a position is on next-week's expiry, we poll THAT expiry.
-    if (expiryStr) {
-      const pollKey = `${upperSymbol}::${expiryStr}`
-      if (!ensuredOcPolling.has(pollKey)) {
-        ensuredOcPolling.add(pollKey)
-        try {
-          const unsub = ocManager.subscribe(upperSymbol, expiryStr, () => {})
-          ocUnsubs.push(unsub)
-        } catch { /* ignore */ }
-      }
-    } else {
-      // No expiry stored — fall back to nearest expiry for this underlying
-      const fallbackKey = `${upperSymbol}::`
-      if (!ensuredOcPolling.has(fallbackKey)) {
-        ensuredOcPolling.add(fallbackKey)
-        try {
-          const expiries = await ocManager.getExpiries(upperSymbol)
-          if (expiries.length > 0) {
-            const unsub = ocManager.subscribe(upperSymbol, expiries[0], () => {})
-            ocUnsubs.push(unsub)
-          }
-        } catch { /* ignore */ }
-      }
+    if (expiryDate) {
+      // Convert DB DateTime to YYYY-MM-DD safely (avoid timezone issues)
+      const d = expiryDate instanceof Date ? expiryDate : new Date(expiryDate)
+      // Use UTC components to avoid IST→UTC shift changing the date
+      expiryStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
     }
 
-    // ─── Look up from OC manager's latestData ──────────────────────
-    const expiryMap = (ocManager as any).latestData as Map<string, any> | undefined
-    if (expiryMap && expiryMap.size > 0) {
-      // Try ALL expiries for this underlying — match by underlying + strike + optionType
-      for (const [key, data] of expiryMap) {
-        if (data.underlying !== upperSymbol || !data.strikes) continue
+    if (!expiryStr) {
+      expiryStr = await getNearestExpiry(upperSymbol)
+    }
 
-        // If we have an expiryStr, prefer exact match; also try other expiries as fallback
-        if (expiryStr && data.expiry !== expiryStr) continue
-
-        const strike = data.strikes.find((s: any) => s.strike_price === strikePrice)
+    if (!expiryStr) {
+      // Can't determine expiry — fall through to cache
+    } else {
+      // ─── Direct Upstox API fetch with cache ─────────────────────
+      const strikes = await fetchOptionChainDirect(upperSymbol, expiryStr)
+      if (strikes && strikes.length > 0) {
+        const strike = strikes.find((s) => s.strike_price === strikePrice)
         if (strike) {
           const optData = optionType === 'CE'
             ? strike.call_options?.market_data
             : strike.put_options?.market_data
-          if (optData?.ltp && optData.ltp > 0) return optData.ltp
-        }
-      }
-
-      // Fallback: try any expiry for this underlying if exact expiry didn't match
-      if (expiryStr) {
-        for (const [key, data] of expiryMap) {
-          if (data.underlying !== upperSymbol || !data.strikes || data.expiry === expiryStr) continue
-          const strike = data.strikes.find((s: any) => s.strike_price === strikePrice)
-          if (strike) {
-            const optData = optionType === 'CE'
-              ? strike.call_options?.market_data
-              : strike.put_options?.market_data
-            if (optData?.ltp && optData.ltp > 0) return optData.ltp
+          if (optData?.ltp && optData.ltp > 0) {
+            // Also update the in-memory cache for other consumers
+            cache.set(CacheKeys.optionPrice(upperSymbol, optionType, strikePrice), { ltp: optData.ltp }, CacheTTL.OPTION_PRICE)
+            return optData.ltp
           }
         }
       }
     }
-
-    // ─── Fallback to cache ─────────────────────────────────────────
-    const optKey = CacheKeys.optionPrice(symbol, optionType, strikePrice)
-    const cached = cache.get<{ ltp: number }>(optKey)
-    if (cached?.ltp && cached.ltp > 0) return cached.ltp
   } else if (segment === 'FUTURES') {
     const cached = cache.get<{ ltp: number }>(CacheKeys.futurePrice(symbol))
     if (cached?.ltp && cached.ltp > 0) return cached.ltp
@@ -136,6 +220,8 @@ async function getLivePrice(
 
   return 0
 }
+
+// ─── SSE Handler ────────────────────────────────────────────────────────────
 
 export async function GET(request: Request) {
   const auth = await authenticateRequest(request as any)
@@ -273,12 +359,8 @@ export async function GET(request: Request) {
     running = false
     unsubscribe()
     clearInterval(keepAlive)
-    // Clean up OC polling subscriptions we created
-    while (ocUnsubs.length > 0) {
-      const unsub = ocUnsubs.pop()
-      if (unsub) unsub()
-    }
-    ensuredOcPolling.clear()
+    ocDirectCache.clear()
+    ocFetchInProgress.clear()
     try { writer.close() } catch {}
   }
 
