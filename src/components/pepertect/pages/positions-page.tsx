@@ -1052,14 +1052,35 @@ export function PositionsPage() {
       const [underlying, expiry] = key.split('::')
       const es = new EventSource(`/api/options/stream?underlying=${underlying}&expiry=${expiry}`)
 
+      // Batch OC updates with rAF to avoid multiple React re-renders per frame
+      let rafId: number | null = null
+      const pendingPrices: Record<string, number> = {}
+      const pendingPnls: Record<string, number> = {}
+
+      const flushUpdates = () => {
+        rafId = null
+        const prices = { ...pendingPrices }
+        const pnls = { ...pendingPnls }
+        // Clear pending
+        for (const k of Object.keys(pendingPrices)) delete pendingPrices[k]
+        for (const k of Object.keys(pendingPnls)) delete pendingPnls[k]
+
+        if (Object.keys(prices).length > 0) {
+          livePricesRef.current = { ...livePricesRef.current, ...prices }
+          setLivePrices(prev => ({ ...prev, ...prices }))
+        }
+        if (Object.keys(pnls).length > 0) {
+          prevPnlRef.current = { ...prevPnlRef.current, ...pnls }
+          setPrevPnlMap(prev => ({ ...prev, ...pnls }))
+        }
+      }
+
       es.addEventListener('message', (event: MessageEvent) => {
         try {
           const msg = JSON.parse(event.data)
           if (msg.type !== 'update' || !msg.data?.strikes) return
 
           const strikes: any[] = msg.data.strikes
-          const priceUpdates: Record<string, number> = {}
-          const pnlUpdates: Record<string, number> = {}
           let hasChanges = false
 
           // Match strikes against our option positions (read from ref for freshness)
@@ -1089,19 +1110,17 @@ export function PositionsPage() {
                 const prevPnl = pos.tradeDirection === 'BUY'
                   ? (currentLive - pos.entryPrice) * pos.quantity
                   : (pos.entryPrice - currentLive) * pos.quantity
-                pnlUpdates[pos.id] = Math.round(prevPnl * 100) / 100
+                pendingPnls[pos.id] = Math.round(prevPnl * 100) / 100
               }
-              priceUpdates[pos.id] = newPrice
+              pendingPrices[pos.id] = newPrice
               hasChanges = true
             }
           }
 
           if (hasChanges) {
-            livePricesRef.current = { ...livePricesRef.current, ...priceUpdates }
-            setLivePrices(prev => ({ ...prev, ...priceUpdates }))
-            if (Object.keys(pnlUpdates).length > 0) {
-              prevPnlRef.current = { ...prevPnlRef.current, ...pnlUpdates }
-              setPrevPnlMap(prev => ({ ...prev, ...pnlUpdates }))
+            // Batch the state update into the next animation frame
+            if (!rafId) {
+              rafId = requestAnimationFrame(flushUpdates)
             }
           }
         } catch { /* ignore parse errors */ }
@@ -1111,6 +1130,7 @@ export function PositionsPage() {
     }
 
     return () => {
+      if (rafId) cancelAnimationFrame(rafId)
       for (const es of ocSourcesRef.current.values()) es.close()
       ocSourcesRef.current.clear()
     }

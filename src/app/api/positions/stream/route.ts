@@ -190,7 +190,7 @@ export async function GET(request: Request) {
     } catch { /* next cycle */ }
 
     if (running) {
-      setTimeout(pollPositions, 1500)
+      setTimeout(pollPositions, 3000)
     }
   }
 
