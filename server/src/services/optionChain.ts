@@ -10,6 +10,7 @@
 
 import type { ClientConnection } from '../ws/wsManager'
 import { getExpiryDates } from '../lib/expiries'
+import { getUpstoxToken } from '../lib/token-provider'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -174,12 +175,12 @@ export class OptionChainService {
       return
     }
 
-    const token = process.env.UPSTOX_ACCESS_TOKEN
+    const token = await getUpstoxToken()
     if (!token) {
       const key = `${underlying.toUpperCase()}::${expiry}`
       const now = Date.now()
       if (!this.fetchErrorLogged.get(key) || now - this.fetchErrorLogged.get(key)! > 30000) {
-        console.error(`[OC Service] UPSTOX_ACCESS_TOKEN is not set! Option chain cannot fetch.`)
+        console.error(`[OC Service] No Upstox token available (checked env + DB + manual). Option chain cannot fetch.`)
         this.fetchErrorLogged.set(key, now)
       }
       return

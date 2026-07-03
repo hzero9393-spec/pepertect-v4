@@ -11,6 +11,7 @@ import { Router, Request, Response } from 'express'
 import { db } from '../lib/db'
 import { verifyToken, getTokenFromAuthHeader } from '../lib/auth'
 import { cache, CacheKeys, CacheTTL } from '../lib/cache'
+import { getUpstoxToken, setUpstoxToken, getTokenInfo } from '../lib/token-provider'
 
 const router = Router()
 
@@ -189,22 +190,23 @@ router.get('/debug/option-chain', async (req: Request, res: Response) => {
     return res.status(400).json({ error: `Unknown underlying: ${underlying}` })
   }
 
-  const token = process.env.UPSTOX_ACCESS_TOKEN
-  const hasToken = !!token
-  const tokenPrefix = token ? token.substring(0, 8) + '...' : 'NOT SET'
+  const token = await getUpstoxToken()
+  const tokenInfo = await getTokenInfo()
 
   const result: any = {
     underlying,
     instrumentKey,
-    hasUpstoxToken: hasToken,
-    tokenPrefix,
+    tokenInfo,
     timestamp: new Date().toISOString(),
   }
 
-  if (!hasToken) {
-    result.error = 'UPSTOX_ACCESS_TOKEN environment variable is NOT set on this server'
+  if (!token) {
+    result.error = 'No Upstox token available (checked env var, DB platform_settings, and manual override). Set a valid token via POST /api/admin/set-token or set UPSTOX_ACCESS_TOKEN env var on Render.'
     return res.json({ success: false, data: result })
   }
+
+  result.hasUpstoxToken = true
+  result.tokenPrefix = token.substring(0, 8) + '...'
 
   // Get next expiry
   const expiries = getExpiryDates(underlying)
@@ -275,6 +277,65 @@ router.get('/debug/option-chain', async (req: Request, res: Response) => {
   }
 
   res.json({ success: !result.error, data: result })
+})
+
+// ─── Admin: Set Upstox Token ──────────────────────────────────────────
+// POST /api/admin/set-token  body: { token: "..." }
+// Also stores in DB for persistence across restarts
+
+router.post('/admin/set-token', async (req: Request, res: Response) => {
+  const { token } = req.body || {}
+  if (!token || typeof token !== 'string' || token.length < 10) {
+    return res.status(400).json({ success: false, error: 'Invalid token. Provide a valid Upstox access token string.' })
+  }
+
+  try {
+    // Set in memory (immediate effect)
+    setUpstoxToken(token)
+
+    // Also store in DB for persistence
+    await db.platformSettings.upsert({
+      where: { key: 'upstox_access_token' },
+      update: { value: token },
+      create: {
+        key: 'upstox_access_token',
+        value: token,
+        description: 'Upstox API OAuth2 access token (set via admin API)',
+      },
+    })
+
+    // Store timestamp
+    await db.platformSettings.upsert({
+      where: { key: 'upstox_token_obtained_at' },
+      update: { value: new Date().toISOString() },
+      create: {
+        key: 'upstox_token_obtained_at',
+        value: new Date().toISOString(),
+        description: 'Timestamp when Upstox token was last set',
+      },
+    })
+
+    console.log(`[Admin API] Upstox token set via admin API (prefix: ${token.substring(0, 8)}...)`)
+    res.json({ success: true, message: 'Token set successfully', tokenPrefix: token.substring(0, 8) + '...' })
+  } catch (err: any) {
+    console.error('[Admin API] Failed to set token:', err)
+    res.status(500).json({ success: false, error: 'Failed to store token' })
+  }
+})
+
+// ─── Admin: Get Token Status ──────────────────────────────────────────
+
+router.get('/admin/token-status', async (_req: Request, res: Response) => {
+  const info = await getTokenInfo()
+  const token = await getUpstoxToken()
+  res.json({
+    success: true,
+    data: {
+      ...info,
+      hasActiveToken: !!token,
+      activeTokenPrefix: token ? token.substring(0, 8) + '...' : null,
+    }
+  })
 })
 
 export default router
