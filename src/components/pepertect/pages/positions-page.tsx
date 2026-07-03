@@ -37,7 +37,11 @@ import { useAppStore } from '@/lib/store'
 import { toast } from 'sonner'
 import { formatINR, formatINRWhole, formatPrice, formatPnL, formatPercent } from '@/lib/format'
 import { useStockData } from '@/hooks/use-market-data'
-import { StrikeOverviewDrawer } from '@/components/pepertect/ui/strike-overview-drawer'
+import dynamic from 'next/dynamic'
+const StrikeOverviewDrawer = dynamic(
+  () => import('@/components/pepertect/ui/strike-overview-drawer').then(m => ({ default: m.StrikeOverviewDrawer })),
+  { ssr: false }
+)
 
 // ─── Types ───────────────────────────────────────────────────────
 
