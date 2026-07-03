@@ -36,7 +36,7 @@ import {
 import { useAuthStore } from '@/lib/auth-store'
 import { useAppStore } from '@/lib/store'
 import { motion } from 'framer-motion'
-import { formatINR, formatPnL } from '@/lib/format'
+import { formatINR, formatPnL, formatLargeNumber } from '@/lib/format'
 import { DateFilter, DateFilterPreset, DateRange, getDateRange, isDateInRange } from '@/components/pepertect/date-filter'
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -414,7 +414,7 @@ export function OrdersPage() {
           { label: 'Total Orders', value: String(filteredOrders.length), icon: ClipboardList, borderColor: 'border-l-[#00D09C]', iconBg: 'bg-[#00D09C]/10', iconColor: 'text-[#00D09C]' },
           { label: 'Filled', value: String(filledCount), icon: CheckCircle2, borderColor: 'border-l-[#00B386]', iconBg: 'bg-[#00B386]/10', iconColor: 'text-[#00B386]' },
           { label: 'Cancelled', value: String(filteredOrders.filter(o => o.status === 'CANCELLED' || o.status === 'REJECTED').length), icon: XCircle, borderColor: 'border-l-[#eb5b3c]', iconBg: 'bg-[#EB5B3C]/10', iconColor: 'text-[#EB5B3C]' },
-          { label: 'Total Volume', value: totalVolume >= 100000 ? `₹${(totalVolume / 100000).toFixed(1)}L` : `₹${totalVolume.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, icon: IndianRupee, borderColor: 'border-l-[#00D09C]', iconBg: 'bg-[#00D09C]/10', iconColor: 'text-[#00D09C]' },
+          { label: 'Total Volume', value: formatLargeNumber(totalVolume), icon: IndianRupee, borderColor: 'border-l-[#00D09C]', iconBg: 'bg-[#00D09C]/10', iconColor: 'text-[#00D09C]' },
         ].map((stat) => {
           const Icon = stat.icon
           return (

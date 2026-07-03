@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
-import { formatINR, formatNumber } from '@/lib/format'
+import { formatINR, formatINRWhole, formatNumber, formatPrice, formatPercent } from '@/lib/format'
 import {
   AreaChart,
   Area,
@@ -91,14 +91,14 @@ function CustomTooltip({ active, payload, label, range }: { active?: boolean; pa
       <div className="font-semibold text-[#1a1a1a] mb-1.5">{formatDate(d.date, range)}</div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
         <span className="text-[#6b7280]">Open</span>
-        <span className="font-mono font-tabular text-right">{d.open.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+        <span className="font-mono font-tabular text-right">{formatPrice(d.open)}</span>
         <span className="text-[#6b7280]">High</span>
-        <span className="font-mono font-tabular text-right">{d.high.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+        <span className="font-mono font-tabular text-right">{formatPrice(d.high)}</span>
         <span className="text-[#6b7280]">Low</span>
-        <span className="font-mono font-tabular text-right">{d.low.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+        <span className="font-mono font-tabular text-right">{formatPrice(d.low)}</span>
         <span className="text-[#6b7280]">Close</span>
         <span className={cn('font-mono font-tabular text-right font-semibold', isUp ? 'text-[#00B386]' : 'text-[#EB5B3C]')}>
-          {d.close.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+          {formatPrice(d.close)}
         </span>
         {d.volume > 0 && (
           <>
@@ -234,14 +234,14 @@ export function IndexDetailDrawer({ open, onOpenChange, symbol }: IndexDetailDra
                     <h2 className="text-xl font-bold text-[#1a1a1a]">{detail?.name || symbol}</h2>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-2xl font-bold font-mono-data font-tabular text-[#1a1a1a]">
-                        {detail?.currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                        {detail ? formatPrice(detail.currentPrice) : '0.00'}
                       </span>
                       <span className={cn(
                         'flex items-center gap-0.5 text-sm font-semibold',
                         isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'
                       )}>
                         {isPositive ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-                        {isPositive ? '+' : ''}{detail?.change.toFixed(2)} ({isPositive ? '+' : ''}{detail?.changePercent.toFixed(2)}%)
+                        {change >= 0 ? '+' : ''}{formatPrice(detail?.change ?? 0)} ({formatPercent(detail?.changePercent ?? 0)})
                       </span>
                     </div>
                   </div>
@@ -358,7 +358,7 @@ export function IndexDetailDrawer({ open, onOpenChange, symbol }: IndexDetailDra
                             tick={{ fontSize: 10, fill: '#6b7280' }}
                             axisLine={false}
                             tickLine={false}
-                            tickFormatter={(v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                            tickFormatter={(v: number) => formatINRWhole(v)}
                             width={60}
                           />
                           <Tooltip content={<CustomTooltip range={range} />} />
@@ -387,7 +387,7 @@ export function IndexDetailDrawer({ open, onOpenChange, symbol }: IndexDetailDra
                             tick={{ fontSize: 10, fill: '#6b7280' }}
                             axisLine={false}
                             tickLine={false}
-                            tickFormatter={(v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                            tickFormatter={(v: number) => formatINRWhole(v)}
                             width={60}
                           />
                           <Tooltip content={<CustomTooltip range={range} />} />
@@ -450,8 +450,8 @@ export function IndexDetailDrawer({ open, onOpenChange, symbol }: IndexDetailDra
                   <h4 className="text-sm font-semibold text-[#1a1a1a]">Day Range</h4>
                   <div className="space-y-1.5">
                     <div className="flex justify-between text-xs font-mono font-tabular">
-                      <span className="text-[#EB5B3C] font-semibold">{detail.low.toLocaleString('en-IN')}</span>
-                      <span className="text-[#00B386] font-semibold">{detail.high.toLocaleString('en-IN')}</span>
+                      <span className="text-[#EB5B3C] font-semibold">{formatINRWhole(detail.low)}</span>
+                      <span className="text-[#00B386] font-semibold">{formatINRWhole(detail.high)}</span>
                     </div>
                     <div className="h-2 rounded-full bg-[#ffffff] relative overflow-hidden">
                       {(() => {
@@ -481,8 +481,8 @@ export function IndexDetailDrawer({ open, onOpenChange, symbol }: IndexDetailDra
                   <h4 className="text-sm font-semibold text-[#1a1a1a]">52 Week Range</h4>
                   <div className="space-y-1.5">
                     <div className="flex justify-between text-xs font-mono font-tabular">
-                      <span className="text-[#EB5B3C] font-semibold">{detail.week52Low.toLocaleString('en-IN')}</span>
-                      <span className="text-[#00B386] font-semibold">{detail.week52High.toLocaleString('en-IN')}</span>
+                      <span className="text-[#EB5B3C] font-semibold">{formatINRWhole(detail.week52Low)}</span>
+                      <span className="text-[#00B386] font-semibold">{formatINRWhole(detail.week52High)}</span>
                     </div>
                     <div className="h-2 rounded-full bg-[#ffffff] relative overflow-hidden">
                       {(() => {
@@ -607,7 +607,7 @@ function PerformanceRow({ label, change, changePercent }: { label: string; chang
           'font-mono font-tabular text-sm font-semibold',
           isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'
         )}>
-          {isPositive ? '+' : ''}{change.toFixed(2)}
+          {formatPercent(change)}
         </span>
         <span className={cn(
           'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold',
@@ -615,7 +615,7 @@ function PerformanceRow({ label, change, changePercent }: { label: string; chang
             ? 'bg-[#00B386]/10 text-[#00B386]'
             : 'bg-[#EB5B3C]/10 text-[#EB5B3C]'
         )}>
-          {isPositive ? '+' : ''}{changePercent.toFixed(2)}%
+          {formatPercent(changePercent)}
         </span>
       </div>
     </div>

@@ -507,7 +507,7 @@ export function ProfilePage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || 'Failed to add money')
       if (user) setUser({ ...user, virtualBalance: data.newBalance })
-      toast.success(`₹${amount.toLocaleString('en-IN')} added to wallet`)
+      toast.success(`${formatINR(amount)} added to wallet`)
       setAddMoneyOpen(false)
       fetchPortfolio()
     } catch (err: unknown) {
@@ -532,7 +532,7 @@ export function ProfilePage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || 'Failed to withdraw')
       if (user) setUser({ ...user, virtualBalance: data.newBalance })
-      toast.success(`₹${amount.toLocaleString('en-IN')} withdrawn from wallet`)
+      toast.success(`${formatINR(amount)} withdrawn from wallet`)
       setWithdrawOpen(false)
       fetchPortfolio()
     } catch (err: unknown) {
@@ -1238,7 +1238,7 @@ export function ProfilePage() {
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9ca3af]">Win Rate</span>
                     </div>
                     <p className={cn('text-xl font-bold', winRate >= 50 ? 'text-[#00D09C]' : 'text-[#EB5B3C]')}>
-                      {winRate.toFixed(1)}%
+                      {Number(winRate).toFixed(1)}%
                     </p>
                   </div>
 

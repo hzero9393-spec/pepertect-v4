@@ -39,7 +39,7 @@ import { useWatchlistStore } from '@/lib/watchlist-store'
 import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
 import { motion, AnimatePresence } from 'framer-motion'
-import { formatINR, formatINRWhole, formatLargeNumber, formatVolume, calculateBrokerage } from '@/lib/format'
+import { formatINR, formatINRWhole, formatLargeNumber, formatVolume, formatPrice, formatPercent, calculateBrokerage } from '@/lib/format'
 import { StockLogo } from '@/components/pepertect/ui/stock-logo'
 import { useStockQuote } from '@/hooks/use-market-data'
 import {
@@ -219,14 +219,14 @@ function CustomTooltip({ active, payload, range }: { active?: boolean; payload?:
       <div className="font-semibold text-[#1a1a1a] mb-1.5">{formatDate(d.date, range)}</div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
         <span className="text-[#6b7280]">Open</span>
-        <span className="font-mono font-tabular text-right">{d.open.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+        <span className="font-mono font-tabular text-right">{formatPrice(d.open)}</span>
         <span className="text-[#6b7280]">High</span>
-        <span className="font-mono font-tabular text-right">{d.high.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+        <span className="font-mono font-tabular text-right">{formatPrice(d.high)}</span>
         <span className="text-[#6b7280]">Low</span>
-        <span className="font-mono font-tabular text-right">{d.low.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+        <span className="font-mono font-tabular text-right">{formatPrice(d.low)}</span>
         <span className="text-[#6b7280]">Close</span>
         <span className={`font-mono font-tabular text-right font-semibold ${isUp ? 'text-[#00B386]' : 'text-[#EB5B3C]'}`}>
-          {d.close.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+          {formatPrice(d.close)}
         </span>
         {d.volume > 0 && (
           <>
@@ -259,8 +259,8 @@ function RangeBar({ label, low, high, current, lowLabel, highLabel }: {
         <span className="text-xs text-[#6b7280]">{highLabel || label + ' High'}</span>
       </div>
       <div className="flex items-center justify-between text-sm font-mono font-tabular font-semibold">
-        <span className="text-[#EB5B3C]">{low.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-        <span className="text-[#00B386]">{high.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+        <span className="text-[#EB5B3C]">{formatPrice(low)}</span>
+        <span className="text-[#00B386]">{formatPrice(high)}</span>
       </div>
       <div className="h-2 rounded-full bg-[#f0f2f5] relative overflow-hidden">
         <div
@@ -802,11 +802,11 @@ export function StockOverviewPage() {
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-2xl font-bold font-mono font-tabular text-[#1a1a1a]">
-                    {stockDetail.currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {formatPrice(stockDetail.currentPrice)}
                   </span>
                   <span className={`flex items-center gap-0.5 text-sm font-semibold ${isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'}`}>
                     {isPositive ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-                    {isPositive ? '+' : ''}{stockDetail.change.toFixed(2)} ({isPositive ? '+' : ''}{stockDetail.changePercent.toFixed(2)}%)
+                    {stockDetail.change >= 0 ? '+' : ''}{formatPrice(stockDetail.change)} ({formatPercent(stockDetail.changePercent)})
                   </span>
                 </div>
               </div>
@@ -948,7 +948,7 @@ export function StockOverviewPage() {
                               tick={{ fontSize: 10, fill: '#6b7280' }}
                               axisLine={false}
                               tickLine={false}
-                              tickFormatter={(v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                              tickFormatter={(v: number) => formatINRWhole(v)}
                               width={60}
                             />
                             <Tooltip content={<CustomTooltip range={range} />} />
@@ -1010,13 +1010,13 @@ export function StockOverviewPage() {
                     <div className="text-center">
                       <p className="text-[10px] font-semibold text-[#6b7280] uppercase tracking-wider">Open</p>
                       <p className="text-sm font-bold font-mono font-tabular text-[#1a1a1a] mt-1">
-                        {stockDetail.open > 0 ? stockDetail.open.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '--'}
+                        {stockDetail.open > 0 ? formatPrice(stockDetail.open) : '--'}
                       </p>
                     </div>
                     <div className="text-center">
                       <p className="text-[10px] font-semibold text-[#6b7280] uppercase tracking-wider">Prev Close</p>
                       <p className="text-sm font-bold font-mono font-tabular text-[#1a1a1a] mt-1">
-                        {stockDetail.previousClose > 0 ? stockDetail.previousClose.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '--'}
+                        {stockDetail.previousClose > 0 ? formatPrice(stockDetail.previousClose) : '--'}
                       </p>
                     </div>
                     <div className="text-center">
@@ -1028,13 +1028,13 @@ export function StockOverviewPage() {
                     <div className="text-center">
                       <p className="text-[10px] font-semibold text-[#6b7280] uppercase tracking-wider">VWAP</p>
                       <p className="text-sm font-bold font-mono font-tabular text-[#1a1a1a] mt-1">
-                        {stockDetail.vwap ? stockDetail.vwap.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '--'}
+                        {stockDetail.vwap ? formatPrice(stockDetail.vwap) : '--'}
                       </p>
                     </div>
                     <div className="text-center">
                       <p className="text-[10px] font-semibold text-[#6b7280] uppercase tracking-wider">Avg Price</p>
                       <p className="text-sm font-bold font-mono font-tabular text-[#1a1a1a] mt-1">
-                        {stockDetail.averageTradePrice > 0 ? stockDetail.averageTradePrice.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '--'}
+                        {stockDetail.averageTradePrice > 0 ? formatPrice(stockDetail.averageTradePrice) : '--'}
                       </p>
                     </div>
                     <div className="text-center">
@@ -1058,12 +1058,12 @@ export function StockOverviewPage() {
                         <div className="flex items-center gap-2">
                           <div className="size-3 rounded-full bg-[#00d09c]" />
                           <span className="text-lg font-bold font-mono font-tabular text-[#00B386]">
-                            {stockDetail.upperCircuit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                            {formatPrice(stockDetail.upperCircuit)}
                           </span>
                         </div>
                         {stockDetail.currentPrice > 0 && (
                           <p className="text-xs text-[#6b7280]">
-                            {((stockDetail.upperCircuit - stockDetail.currentPrice) / stockDetail.currentPrice * 100).toFixed(2)}% away
+                            {formatPercent((stockDetail.upperCircuit - stockDetail.currentPrice) / stockDetail.currentPrice * 100)} away
                           </p>
                         )}
                       </div>
@@ -1072,12 +1072,12 @@ export function StockOverviewPage() {
                         <div className="flex items-center gap-2">
                           <div className="size-3 rounded-full bg-[#eb5b3c]" />
                           <span className="text-lg font-bold font-mono font-tabular text-[#EB5B3C]">
-                            {stockDetail.lowerCircuit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                            {formatPrice(stockDetail.lowerCircuit)}
                           </span>
                         </div>
                         {stockDetail.currentPrice > 0 && (
                           <p className="text-xs text-[#6b7280]">
-                            {((stockDetail.currentPrice - stockDetail.lowerCircuit) / stockDetail.currentPrice * 100).toFixed(2)}% away
+                            {formatPercent((stockDetail.currentPrice - stockDetail.lowerCircuit) / stockDetail.currentPrice * 100)} away
                           </p>
                         )}
                       </div>
@@ -1107,13 +1107,13 @@ export function StockOverviewPage() {
                   <MetricRow label="Mkt Cap" value={formatLargeNumber(stockDetail.marketCap)} />
                   <MetricRow label="ROE" value={stockDetail.roe ? `${stockDetail.roe.toFixed(2)}%` : '--'} highlight={stockDetail.roe > 15 ? 'green' : stockDetail.roe < 10 ? 'red' : undefined} />
                   <MetricRow label="P/E Ratio (TTM)" value={stockDetail.peRatio ? stockDetail.peRatio.toFixed(2) : '--'} />
-                  <MetricRow label="EPS (TTM)" value={stockDetail.eps ? `₹${stockDetail.eps.toFixed(2)}` : '--'} />
+                  <MetricRow label="EPS (TTM)" value={stockDetail.eps ? formatPrice(stockDetail.eps) : '--'} />
                   <MetricRow label="P/B Ratio" value={stockDetail.pbRatio ? stockDetail.pbRatio.toFixed(2) : '--'} />
                   <MetricRow label="Div Yield" value={stockDetail.dividendYield ? `${(stockDetail.dividendYield * 100).toFixed(2)}%` : '--'} highlight={stockDetail.dividendYield > 0 ? 'green' : undefined} />
                   <MetricRow label="Industry P/E" value={stockDetail.industryPE ? stockDetail.industryPE.toFixed(2) : '--'} />
-                  <MetricRow label="Book Value" value={stockDetail.bookValue ? `₹${stockDetail.bookValue.toFixed(2)}` : '--'} />
+                  <MetricRow label="Book Value" value={stockDetail.bookValue ? formatPrice(stockDetail.bookValue) : '--'} />
                   <MetricRow label="Debt to Equity" value={stockDetail.debtToEquity ? stockDetail.debtToEquity.toFixed(2) : '--'} highlight={stockDetail.debtToEquity > 1 ? 'red' : stockDetail.debtToEquity > 0 ? 'green' : undefined} />
-                  <MetricRow label="Face Value" value={stockDetail.faceValue ? `₹${stockDetail.faceValue.toFixed(0)}` : '--'} />
+                  <MetricRow label="Face Value" value={stockDetail.faceValue ? formatINRWhole(stockDetail.faceValue) : '--'} />
                 </div>
                 <p className="text-xs text-[#6b7280] mt-3 flex items-center gap-1">
                   <Info className="size-3" />
@@ -1182,12 +1182,12 @@ export function StockOverviewPage() {
                           <p className="text-xs text-[#6b7280]">{stock.symbol}</p>
                           <div className="mt-2 flex items-center justify-between">
                             <span className="text-sm font-bold font-mono font-tabular text-[#1a1a1a]">
-                              {stock.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              {formatPrice(stock.currentPrice)}
                             </span>
                             <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
                               stockPositive ? 'bg-[#00B386]/10 text-[#00B386]' : 'bg-[#EB5B3C]/10 text-[#EB5B3C]'
                             }`}>
-                              {stockPositive ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                              {formatPercent(stock.changePercent)}
                             </span>
                           </div>
                         </button>
@@ -1298,7 +1298,7 @@ export function StockOverviewPage() {
                         <div className="bg-[#f8f9fb] rounded-xl p-4 text-center">
                           <p className="text-[10px] font-semibold text-[#6b7280] uppercase tracking-wider mb-1">Max Pain</p>
                           <p className="text-2xl font-bold font-mono font-tabular text-[#1a1a1a]">
-                            {fnoData.optionChainSummary.maxPain > 0 ? '₹' + fnoData.optionChainSummary.maxPain.toLocaleString('en-IN') : '--'}
+                            {fnoData.optionChainSummary.maxPain > 0 ? formatINRWhole(fnoData.optionChainSummary.maxPain) : '--'}
                           </p>
                           <div className="flex items-center justify-center gap-1 mt-0.5">
                             <Target className="size-3 text-[#6b7280]" />
@@ -1407,11 +1407,11 @@ export function StockOverviewPage() {
                                   <span className="text-[10px] text-[#6b7280] ml-1.5">({fut.lotSize} lot)</span>
                                 </td>
                                 <td className="px-2 py-3 text-right font-mono font-tabular font-semibold text-[#1a1a1a]">
-                                  {fut.ltp.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                  {formatPrice(fut.ltp)}
                                 </td>
                                 <td className={`px-2 py-3 text-right font-mono font-tabular font-semibold ${isUp ? 'text-[#00B386]' : 'text-[#EB5B3C]'}`}>
-                                  {isUp ? '+' : ''}{fut.change.toFixed(2)}
-                                  <span className="ml-1 text-[10px]">({isUp ? '+' : ''}{fut.changePercent.toFixed(2)}%)</span>
+                                  {fut.change >= 0 ? '+' : ''}{formatPrice(fut.change)}
+                                  <span className="ml-1 text-[10px]">({formatPercent(fut.changePercent)})</span>
                                 </td>
                                 <td className="px-2 py-3 text-right font-mono font-tabular text-[#6b7280]">
                                   {fut.oi > 0 ? formatVolume(fut.oi) : '--'}
@@ -1421,9 +1421,9 @@ export function StockOverviewPage() {
                                 </td>
                                 <td className="px-2 py-3 text-right font-mono">
                                   <span className={fut.basis >= 0 ? 'text-[#00B386]' : 'text-[#EB5B3C]'}>
-                                    {fut.basis.toFixed(2)}
+                                    {formatPrice(fut.basis)}
                                   </span>
-                                  <span className="text-[10px] text-[#6b7280] ml-1">({fut.basisPercent.toFixed(2)}%)</span>
+                                  <span className="text-[10px] text-[#6b7280] ml-1">({formatPercent(fut.basisPercent)})</span>
                                 </td>
                               </tr>
                             )
@@ -1448,7 +1448,7 @@ export function StockOverviewPage() {
                       Option Chain Quick View
                     </h3>
                     <span className="text-xs text-[#6b7280]">
-                      ATM: ₹{atmStrike.toLocaleString('en-IN')}
+                      ATM: {formatINRWhole(atmStrike)}
                     </span>
                   </div>
 
@@ -1493,25 +1493,25 @@ export function StockOverviewPage() {
                                   {opt.ceOI > 0 ? formatVolume(opt.ceOI) : '-'}
                                 </td>
                                 <td className={`px-2 py-2 text-right font-mono font-tabular ${opt.ceChange >= 0 ? 'text-[#00B386]' : 'text-[#EB5B3C]'} ${ceItm ? 'bg-[#00B386]/5' : ''}`}>
-                                  {opt.ceChange !== 0 ? `${opt.ceChange >= 0 ? '+' : ''}${opt.ceChange.toFixed(2)}` : '-'}
+                                  {opt.ceChange !== 0 ? `${opt.ceChange >= 0 ? '+' : ''}${formatPrice(opt.ceChange)}` : '-'}
                                 </td>
                                 <td className={`px-2 py-2 text-right font-mono font-tabular font-semibold text-[#1a1a1a] ${ceItm ? 'bg-[#00B386]/5' : ''}`}>
-                                  {opt.ceLtp > 0 ? opt.ceLtp.toFixed(2) : '-'}
+                                  {opt.ceLtp > 0 ? formatPrice(opt.ceLtp) : '-'}
                                 </td>
 
                                 {/* Strike */}
                                 <td className={`px-2 py-2 text-center font-mono font-tabular font-bold bg-[#f5f7fa] border-x border-[#e5e7eb] ${
                                   isAtm ? 'bg-[#00B386]/15 text-[#00B386]' : 'text-[#1a1a1a]'
                                 }`}>
-                                  {opt.strikePrice.toLocaleString('en-IN')}
+                                  {formatINRWhole(opt.strikePrice)}
                                 </td>
 
                                 {/* PE Side */}
                                 <td className={`px-2 py-2 text-left font-mono font-tabular font-semibold text-[#1a1a1a] ${peItm ? 'bg-[#EB5B3C]/5' : ''}`}>
-                                  {opt.peLtp > 0 ? opt.peLtp.toFixed(2) : '-'}
+                                  {opt.peLtp > 0 ? formatPrice(opt.peLtp) : '-'}
                                 </td>
                                 <td className={`px-2 py-2 text-left font-mono font-tabular ${opt.peChange >= 0 ? 'text-[#00B386]' : 'text-[#EB5B3C]'} ${peItm ? 'bg-[#EB5B3C]/5' : ''}`}>
-                                  {opt.peChange !== 0 ? `${opt.peChange >= 0 ? '+' : ''}${opt.peChange.toFixed(2)}` : '-'}
+                                  {opt.peChange !== 0 ? `${opt.peChange >= 0 ? '+' : ''}${formatPrice(opt.peChange)}` : '-'}
                                 </td>
                                 <td className={`px-2 py-2 text-left font-mono font-tabular text-[#6b7280] ${peItm ? 'bg-[#EB5B3C]/5' : ''}`}>
                                   {opt.peOI > 0 ? formatVolume(opt.peOI) : '-'}
@@ -1616,7 +1616,7 @@ export function StockOverviewPage() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium text-[#1a1a1a]">Current Price</span>
                       <span className={`text-sm font-mono font-tabular font-bold ${isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'}`}>
-                        {stockDetail.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        {formatPrice(stockDetail.currentPrice)}
                       </span>
                     </div>
                     <div className="h-px bg-[#e5e7eb]" />
@@ -1723,7 +1723,7 @@ export function StockOverviewPage() {
                         <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md text-[10px] font-bold ${
                           isPositive ? 'bg-[#00B386]/10 text-[#00B386]' : 'bg-[#EB5B3C]/10 text-[#EB5B3C]'
                         }`}>
-                          {isPositive ? '+' : ''}{stockDetail.changePercent.toFixed(2)}%
+                          {formatPercent(stockDetail.changePercent)}
                         </span>
                         {tradeSegment !== 'EQUITY' && (
                           <Badge className="text-[9px] font-bold bg-[#00B386]/10 text-[#00B386] border-[#00B386]/20 border px-1.5 py-0">

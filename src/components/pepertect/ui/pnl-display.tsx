@@ -48,7 +48,7 @@ export function PnLPill({ value, percent, className }: PnLPillProps) {
   return (
     <span className={cn('groww-pill font-tabular', pillClass, className)}>
       {value > 0 ? '+' : value < 0 ? '-' : ''}
-      ₹{Math.abs(value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      {formatINR(value)}
       {percent !== undefined && (
         <span className="ml-0.5">({formatPercent(percent)})</span>
       )}
@@ -75,7 +75,7 @@ export function PriceDisplay({ value, size = 'md', change, changePercent, classN
   return (
     <div className={cn('flex items-baseline gap-2', className)}>
       <span className={cn('font-tabular', sizeClasses[size])}>
-        ₹{value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        {formatINR(value)}
       </span>
       {change !== undefined && changePercent !== undefined && (
         <PnLPill value={change} percent={changePercent} />

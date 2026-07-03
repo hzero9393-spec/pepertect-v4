@@ -28,6 +28,7 @@ import {
   Users,
   Trophy,
 } from 'lucide-react'
+import { formatNumber } from '@/lib/format'
 
 const top3 = [
   { rank: 2, name: 'Priya Sharma', initials: 'PS', roi: 287.4, winRate: 82.1, borderColor: '#C0C0C0', bgColor: 'bg-gray-800', textColor: 'text-gray-300', borderClass: 'border-gray-500' },
@@ -214,7 +215,7 @@ export function LeaderboardPage() {
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold text-emerald-400">+{yourRow.roi}%</TableCell>
                   <TableCell className="text-right font-mono text-white">{yourRow.winRate}%</TableCell>
-                  <TableCell className="text-right font-mono text-white hidden sm:table-cell">{yourRow.totalTrades.toLocaleString()}</TableCell>
+                  <TableCell className="text-right font-mono text-white hidden sm:table-cell">{formatNumber(yourRow.totalTrades)}</TableCell>
                   <TableCell className="text-right font-mono font-semibold text-emerald-400 hidden md:table-cell">{yourRow.pnl}</TableCell>
                   <TableCell className="text-right"><TrendIcon trend={yourRow.trend} /></TableCell>
                 </TableRow>
@@ -233,7 +234,7 @@ export function LeaderboardPage() {
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold text-emerald-400">+{row.roi}%</TableCell>
                     <TableCell className="text-right font-mono text-white">{row.winRate}%</TableCell>
-                    <TableCell className="text-right font-mono text-white hidden sm:table-cell">{row.totalTrades.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono text-white hidden sm:table-cell">{formatNumber(row.totalTrades)}</TableCell>
                     <TableCell className="text-right font-mono font-semibold text-emerald-400 hidden md:table-cell">{row.pnl}</TableCell>
                     <TableCell className="text-right"><TrendIcon trend={row.trend} /></TableCell>
                   </TableRow>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { ArrowUpRight, ArrowDownRight, Zap, WifiOff } from 'lucide-react'
-import { formatPercent } from '@/lib/format'
+import { formatPercent, formatPrice } from '@/lib/format'
 import { useAppStore } from '@/lib/store'
 import { useIndexData, type WsIndexQuote } from '@/hooks/use-market-data'
 
@@ -188,7 +188,7 @@ export function IndexTicker() {
                     {idx.symbol}
                   </span>
                   <span className="text-[12px] font-semibold font-tabular" style={{ color: '#1a1a1a' }}>
-                    {idx.currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                    {formatPrice(idx.currentPrice)}
                   </span>
                   <span
                     className="flex items-center gap-0.5 text-[11px] font-semibold font-tabular"

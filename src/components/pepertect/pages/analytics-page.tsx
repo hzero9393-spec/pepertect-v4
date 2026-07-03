@@ -37,6 +37,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
+import { formatINR, formatPnL, formatLargeNumber } from '@/lib/format'
 
 const portfolioData = [
   { date: 'Jan', value: 980000, change: 0 },
@@ -179,10 +180,10 @@ function CustomAreaTooltip({
     <div className="bg-[#111827] border border-[#1f2937] rounded-lg px-4 py-3 shadow-xl">
       <p className="text-gray-400 text-xs font-medium">{label}</p>
       <p className="font-mono text-white text-lg font-semibold">
-        ₹{value?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+        {formatINR(value ?? 0)}
       </p>
       <p className={`font-mono text-xs font-medium ${change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-        {change >= 0 ? '+' : ''}₹{change.toLocaleString('en-IN')}
+        {formatPnL(change)}
       </p>
     </div>
   )
@@ -256,7 +257,7 @@ export default function AnalyticsPage() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.4} vertical={false} />
                 <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} dy={8} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={(v: number) => `₹${(v / 100000).toFixed(1)}L`} width={55} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={(v: number) => formatLargeNumber(v)} width={55} />
                 <RechartsTooltip content={<CustomAreaTooltip />} cursor={{ stroke: '#f59e0b', strokeWidth: 1, strokeDasharray: '4 4' }} />
                 <Area type="monotone" dataKey="value" stroke="#f59e0b" strokeWidth={2.5} fill="url(#portfolioGradient)" dot={false} activeDot={{ r: 5, fill: '#f59e0b', stroke: '#ffffff', strokeWidth: 2 }} />
               </AreaChart>

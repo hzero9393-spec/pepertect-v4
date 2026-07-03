@@ -16,7 +16,7 @@ import { toast } from 'sonner'
 import { useAuthStore } from '@/lib/auth-store'
 import { useAppStore } from '@/lib/store'
 import { useWatchlistStore } from '@/lib/watchlist-store'
-import { formatINR } from '@/lib/format'
+import { formatINR, formatPercent } from '@/lib/format'
 import { StockLogo } from '@/components/pepertect/ui/stock-logo'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -315,7 +315,7 @@ export function WatchlistSidebar() {
                                   ) : (
                                     <ArrowDownRight className="size-2.5" />
                                   )}
-                                  {isPositive ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                                  {formatPercent(stock.changePercent)}
                                 </span>
                               </>
                             ) : (

@@ -28,7 +28,7 @@ import {
   WifiOff,
 } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
-import { formatPrice } from '@/lib/format'
+import { formatPrice, formatPercent } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useIndexData, useStockData, useMarketDataStatus, type WsIndexQuote, type WsStockQuote } from '@/hooks/use-market-data'
@@ -162,11 +162,11 @@ function StockRow({ stock, onClick }: { stock: StockData; onClick: () => void })
             isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'
           )}>
             {isPositive ? <ArrowUpRight className="size-3" /> : <ArrowDownRight className="size-3" />}
-            <span>{isPositive ? '+' : ''}{stock.change.toFixed(2)}</span>
+            <span>{stock.change >= 0 ? '+' : ''}{formatPrice(stock.change)}</span>
             <span className={cn('text-[10px] px-1.5 py-0.5 rounded',
               isPositive ? 'bg-[#00B386]/10' : 'bg-[#EB5B3C]/10'
             )}>
-              {isPositive ? '+' : ''}{stock.changePercent.toFixed(2)}%
+              {formatPercent(stock.changePercent)}
             </span>
           </div>
         </div>
@@ -426,11 +426,11 @@ export function DashboardPage() {
             isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'
           )}>
             {isPositive ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-            <span>{isPositive ? '+' : ''}{index.change.toFixed(2)}</span>
+            <span>{index.change >= 0 ? '+' : ''}{formatPrice(index.change)}</span>
             <span className={cn('text-[10px] px-1.5 py-0.5 rounded font-bold',
               isPositive ? 'bg-[#00B386]/10 text-[#00B386]' : 'bg-[#EB5B3C]/10 text-[#EB5B3C]'
             )}>
-              {isPositive ? '+' : ''}{index.changePercent.toFixed(2)}%
+              {formatPercent(index.changePercent)}
             </span>
           </div>
 
@@ -672,7 +672,7 @@ export function DashboardPage() {
                         {isPositive ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
                         <span>{sector.name}</span>
                         <span className="font-mono">
-                          {isPositive ? '+' : ''}{sector.todayChange.toFixed(2)}%
+                          {formatPercent(sector.todayChange)}
                         </span>
                       </div>
                     )

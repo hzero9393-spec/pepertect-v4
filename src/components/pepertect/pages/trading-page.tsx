@@ -32,7 +32,7 @@ import { useWatchlistStore } from '@/lib/watchlist-store'
 import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
 import { motion, AnimatePresence } from 'framer-motion'
-import { formatINR, formatVolume, calculateBrokerage } from '@/lib/format'
+import { formatINR, formatVolume, formatPercent, calculateBrokerage } from '@/lib/format'
 import { StockLogo } from '@/components/pepertect/ui/stock-logo'
 import { useStockData, type WsStockQuote } from '@/hooks/use-market-data'
 
@@ -302,7 +302,7 @@ function StockRow({ stock, onClick }: { stock: TradeableStock; onClick: () => vo
           ) : (
             <ArrowDownRight className="size-3" />
           )}
-          {isPositive ? '+' : ''}{stock.changePercent.toFixed(2)}%
+          {formatPercent(stock.changePercent)}
         </div>
         {/* Watchlist Star */}
         <button
@@ -505,7 +505,7 @@ function OrderPanel({
                     : 'bg-[#EB5B3C]/10 text-[#EB5B3C]'
                 }`}>
                   {isPositive ? <ArrowUpRight className="size-2.5" /> : <ArrowDownRight className="size-2.5" />}
-                  {isPositive ? '+' : ''}{selectedStock.changePercent.toFixed(2)}%
+                  {formatPercent(selectedStock.changePercent)}
                 </span>
               </div>
               <p className="text-xs text-[#6b7280] mt-0.5 truncate max-w-[180px]">{selectedStock.name}</p>
@@ -1417,7 +1417,7 @@ export function TradingPage() {
                           <p className={`text-[10px] font-medium ${
                             isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'
                           }`}>
-                            {isPositive ? '+' : ''}{pos.unrealizedPnlPercent.toFixed(2)}%
+                            {formatPercent(pos.unrealizedPnlPercent)}
                           </p>
                         </div>
                       </div>

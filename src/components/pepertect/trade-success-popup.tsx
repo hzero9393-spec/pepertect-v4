@@ -2,6 +2,7 @@
 
 import { useState, useEffect, createContext, useContext, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { formatINR } from '@/lib/format'
 import { CheckCircle2, X, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -157,7 +158,7 @@ export function TradeSuccessProvider({ children }: { children: React.ReactNode }
                     </div>
                     <div className="bg-[#0a0e17] rounded-lg p-3 border border-[#1f2937]">
                       <p className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Price</p>
-                      <p className="text-sm font-bold font-mono font-tabular text-white">₹{tradeData.price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-sm font-bold font-mono font-tabular text-white">{formatINR(tradeData.price)}</p>
                     </div>
                     <div className="bg-[#0a0e17] rounded-lg p-3 border border-[#1f2937]">
                       <p className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Time</p>
@@ -174,7 +175,7 @@ export function TradeSuccessProvider({ children }: { children: React.ReactNode }
                     <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-amber-500/5 border border-amber-500/10">
                       <span className="text-sm font-medium text-gray-400">Total Value</span>
                       <span className="text-lg font-bold font-mono font-tabular text-amber-500">
-                        ₹{tradeData.totalValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {formatINR(tradeData.totalValue)}
                       </span>
                     </div>
                   )}

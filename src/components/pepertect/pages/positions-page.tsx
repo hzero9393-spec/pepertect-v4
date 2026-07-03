@@ -35,7 +35,7 @@ import {
 import { useAuthStore } from '@/lib/auth-store'
 import { useAppStore } from '@/lib/store'
 import { toast } from 'sonner'
-import { formatINR, formatINRWhole, formatPrice } from '@/lib/format'
+import { formatINR, formatINRWhole, formatPrice, formatPnL, formatPercent } from '@/lib/format'
 import { useStockData } from '@/hooks/use-market-data'
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -151,12 +151,12 @@ const PnLFillCell = memo(function PnLFillCell({
       <span className={`font-mono-data font-tabular text-[15px] font-bold ${
         isPositive ? 'text-[#009e76]' : 'text-[#d44a2d]'
       }`}>
-        {isPositive ? '+' : '-'}₹{absPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        {formatPnL(isPositive ? absPnl : -absPnl)}
       </span>
       <span className={`font-mono-data font-tabular text-[11px] font-semibold mt-0.5 ${
         isPositive ? 'text-[#009e76]/80' : 'text-[#d44a2d]/80'
       }`}>
-        {isPositive ? '+' : ''}{pnlPercent.toFixed(2)}%
+        {formatPercent(pnlPercent)}
       </span>
     </div>
   )
@@ -375,7 +375,7 @@ const ClosedPositionCard = memo(function ClosedPositionCard({
           <span className={`font-mono-data font-tabular text-[15px] font-bold ${
             isPositive ? 'text-[#009e76]' : 'text-[#d44a2d]'
           }`}>
-            {isPositive ? '+' : '-'}₹{Math.abs(realizedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {formatPnL(isPositive ? realizedPnl : -realizedPnl)}
           </span>
           <span className={`font-mono-data font-tabular text-[11px] font-semibold mt-0.5 ${
             isPositive ? 'text-[#009e76]/80' : 'text-[#d44a2d]/80'
@@ -453,7 +453,7 @@ const TotalPnLBanner = memo(function TotalPnLBanner({
             <span className={`font-mono-data font-tabular text-[28px] font-bold tracking-tight ${
               isProfit ? 'text-[#009e76]' : 'text-[#d44a2d]'
             }`}>
-              {isProfit ? '+' : '-'}₹{Math.abs(totalPnl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatPnL(isProfit ? totalPnl : -totalPnl)}
             </span>
           </div>
         </div>
@@ -687,15 +687,15 @@ function PositionDetailSheet({
               isProfit ? 'text-[#009e76]' : 'text-[#d44a2d]'
             }`}>
               {isPositionOpen
-                ? `${livePnl >= 0 ? '+' : '-'}₹${Math.abs(livePnl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : `${(position.realizedPnl ?? 0) >= 0 ? '+' : '-'}₹${Math.abs(position.realizedPnl ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                ? formatPnL(livePnl)
+                : formatPnL(position.realizedPnl ?? 0)
               }
             </span>
             {isPositionOpen && (
               <span className={`font-mono-data font-tabular text-[13px] font-semibold ${
                 isProfit ? 'text-[#009e76]/70' : 'text-[#d44a2d]/70'
               }`}>
-                {livePnl >= 0 ? '+' : ''}{livePnlPercent.toFixed(2)}%
+                {formatPercent(livePnlPercent)}
               </span>
             )}
           </div>
@@ -947,7 +947,7 @@ export function PositionsPage() {
           for (const [posId, evt] of Object.entries(exitEvents)) {
             const reasonLabel = evt.reason === 'STOP_LOSS' ? 'Stop Loss' : 'Target'
             toast.success(`${reasonLabel} hit! Auto-exited @ ₹${evt.exitPrice}`, {
-              description: `P&L: ${evt.pnl >= 0 ? '+' : ''}₹${Math.abs(evt.pnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+              description: `P&L: ${formatPnL(evt.pnl)}`,
               duration: 5000,
             })
             // Refetch after a short delay to get updated position list
@@ -959,7 +959,7 @@ export function PositionsPage() {
           const evt = msg.data
           const reasonLabel = evt.reason === 'STOP_LOSS' ? 'Stop Loss' : 'Target'
           toast.success(`${reasonLabel} hit! ${evt.symbol} @ ₹${evt.exitPrice}`, {
-            description: `P&L: ${evt.pnl >= 0 ? '+' : ''}₹${Math.abs(evt.pnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+            description: `P&L: ${formatPnL(evt.pnl)}`,
             duration: 5000,
           })
           setTimeout(() => fetchPositions(), 500)
@@ -1002,7 +1002,7 @@ export function PositionsPage() {
       const data = await res.json()
       if (res.ok && data.success) {
         const pnlStr = data.closedPosition
-          ? `P&L: ${data.closedPosition.realizedPnl >= 0 ? '+' : ''}₹${Math.abs(data.closedPosition.realizedPnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+          ? `P&L: ${formatPnL(data.closedPosition.realizedPnl)}`
           : ''
         toast.success(`✅ ${symbol} squared off successfully!`, {
           description: pnlStr,

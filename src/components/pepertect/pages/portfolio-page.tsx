@@ -37,7 +37,7 @@ import { useAuthStore } from '@/lib/auth-store'
 import { useAppStore } from '@/lib/store'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
-import { formatINR, formatINRWhole } from '@/lib/format'
+import { formatINR, formatINRWhole, formatPercent, formatPrice } from '@/lib/format'
 import { DateFilter, DateFilterPreset, DateRange, getDateRange, isDateInRange } from '@/components/pepertect/date-filter'
 import { useStockData } from '@/hooks/use-market-data'
 
@@ -430,7 +430,7 @@ export default function PortfolioPage() {
                   }`}>
                     {totalPnl >= 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
                     {totalPnl >= 0 ? '+' : '-'}{formatINR(Math.abs(totalPnl))}
-                    <span className="ml-0.5">({totalReturn >= 0 ? '+' : ''}{totalReturn.toFixed(2)}%)</span>
+                    <span className="ml-0.5">({formatPercent(totalReturn)})</span>
                   </div>
                 </div>
 
@@ -498,7 +498,7 @@ export default function PortfolioPage() {
                   </h3>
                   <div className={`mt-2 flex items-center gap-1 text-xs font-semibold ${totalPnl >= 0 ? 'text-[#00B386]' : 'text-[#EB5B3C]'}`}>
                     {totalPnl >= 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-                    {totalReturn >= 0 ? '+' : ''}{totalReturn.toFixed(2)}% returns
+                    {formatPercent(totalReturn)} returns
                   </div>
                 </CardContent>
               </Card>
@@ -518,7 +518,7 @@ export default function PortfolioPage() {
                   </h3>
                   <div className={`mt-2 flex items-center gap-1 text-xs font-semibold ${unrealizedPnl >= 0 ? 'text-[#00B386]' : 'text-[#EB5B3C]'}`}>
                     {unrealizedPnl >= 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-                    {investedAmount > 0 ? ((unrealizedPnl / investedAmount) * 100).toFixed(2) : '0.00'}% ROI
+                    {formatPercent(investedAmount > 0 ? (unrealizedPnl / investedAmount) * 100 : 0)} ROI
                   </div>
                 </CardContent>
               </Card>
@@ -646,7 +646,7 @@ export default function PortfolioPage() {
                                   {isPositive ? '+' : '-'}{formatINR(Math.abs(pnlValue))}
                                 </span>
                                 <span className={`text-[10px] font-semibold ${isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'}`}>
-                                  {isPositive ? '+' : ''}{pnlPercent.toFixed(2)}%
+                                  {formatPercent(pnlPercent)}
                                 </span>
                               </div>
                             </TableCell>
@@ -693,8 +693,8 @@ export default function PortfolioPage() {
                   const Icon = segment.icon
                   const isProfit = segment.pnl >= 0
                   const pnlPercent = segment.invested > 0
-                    ? ((segment.pnl / segment.invested) * 100).toFixed(2)
-                    : '0.00'
+                    ? (segment.pnl / segment.invested) * 100
+                    : 0
                   return (
                     <Card key={segment.name} className="bg-white border border-[#e5e7eb] rounded-xl shadow-sm hover:shadow-md hover:border-[#00D09C]/20 transition-all duration-300">
                       <CardContent className="p-5">
@@ -713,7 +713,7 @@ export default function PortfolioPage() {
                           <Badge variant="outline" className={`text-[10px] font-semibold border-0 ${
                             isProfit ? 'bg-[#00B386]/10 text-[#00B386]' : 'bg-[#EB5B3C]/10 text-[#EB5B3C]'
                           }`}>
-                            {isProfit ? '+' : ''}{pnlPercent}%
+                            {formatPercent(pnlPercent)}
                           </Badge>
                         </div>
                         <div className="space-y-2">
@@ -766,7 +766,7 @@ export default function PortfolioPage() {
                               ))}
                             </Pie>
                             <Tooltip
-                              formatter={(value: number) => `₹${value.toLocaleString('en-IN')}`}
+                              formatter={(value: number) => formatINR(value)}
                               contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e5e7eb', borderRadius: '10px', fontSize: '12px', color: '#1a1a1a', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                               itemStyle={{ color: '#1a1a1a' }}
                               labelStyle={{ color: '#6b7280' }}
@@ -790,7 +790,7 @@ export default function PortfolioPage() {
                                 <span className="text-xs font-semibold text-[#1a1a1a]">{item.name}</span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <span className="font-mono-data font-tabular text-sm text-[#1a1a1a]">₹{item.value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                                <span className="font-mono-data font-tabular text-sm text-[#1a1a1a]">{formatINRWhole(item.value)}</span>
                                 <Badge variant="outline" className="border-[#e5e7eb] text-[10px] text-[#6b7280]">{percent}%</Badge>
                               </div>
                             </div>

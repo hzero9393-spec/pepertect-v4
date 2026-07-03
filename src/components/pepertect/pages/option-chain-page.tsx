@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
 import { useAppStore } from '@/lib/store'
+import { formatINR, formatINRWhole, formatPrice, formatPercent } from '@/lib/format'
 import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
 import { X, Minus, Plus, ChevronDown } from 'lucide-react'
@@ -429,11 +430,11 @@ export function OptionChainPage() {
           style={{ background: C.surface, borderColor: C.border }}
         >
           <span className="font-semibold" style={{ color: C.text }}>
-            {data.spot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {formatPrice(data.spot)}
           </span>
           {spotChange !== null && spotChange !== 0 && (
             <span className="font-medium" style={{ color: spotChange > 0 ? C.green : C.red }}>
-              {spotChange > 0 ? '+' : ''}{spotChange.toFixed(2)}
+              {spotChange > 0 ? '+' : ''}{formatPrice(Math.abs(spotChange))}
             </span>
           )}
           <span style={{ color: C.textMuted }}>PCR</span>
@@ -589,7 +590,7 @@ export function OptionChainPage() {
                           else openTrade('PE', s.strike_price, pe.ltp, 'BUY')
                         }}
                       >
-                        {s.strike_price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        {formatINRWhole(s.strike_price)}
                       </div>
 
                       {/* PE Side: LTP + Chg */}
@@ -646,7 +647,7 @@ export function OptionChainPage() {
                           background: isATM ? C.atmBg : 'transparent',
                         }}
                       >
-                        {s.strike_price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        {formatINRWhole(s.strike_price)}
                       </div>
 
                       {/* PE OI */}
@@ -702,7 +703,7 @@ export function OptionChainPage() {
                   {index} {trade.strike} {trade.optionType}
                 </p>
                 <p className="text-[11px]" style={{ color: C.textDim }}>
-                  {fmtExpiry(expiry)} &middot; Lot: {lotSize} &middot; LTP: {'\u20B9'}{fmtLtp(trade.ltp)}
+                  {fmtExpiry(expiry)} &middot; Lot: {lotSize} &middot; LTP: {formatINR(trade.ltp)}
                 </p>
               </div>
               <button onClick={() => setTrade(defaultTrade)} className="p-1.5 rounded-full hover:bg-gray-100">
@@ -853,7 +854,7 @@ export function OptionChainPage() {
                 <div className="flex justify-between">
                   <span style={{ color: C.textDim }}>Available Margin</span>
                   <span className="font-mono font-semibold" style={{ color: availableMargin > totalValue + brokerage ? C.green : C.red }}>
-                    {'\u20B9'}{availableMargin.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    {formatINRWhole(availableMargin)}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -866,20 +867,20 @@ export function OptionChainPage() {
                 <div className="flex justify-between">
                   <span style={{ color: C.textDim }}>Total Value</span>
                   <span className="font-mono font-semibold" style={{ color: C.text }}>
-                    {'\u20B9'}{totalValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {formatINR(totalValue)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span style={{ color: C.textDim }}>Brokerage</span>
                   <span className="font-mono" style={{ color: C.text }}>
-                    {'\u20B9'}{Math.round(brokerage * 100) / 100}
+                    {formatINR(brokerage)}
                   </span>
                 </div>
                 {trade.side === 'SELL' && (
                   <div className="flex justify-between" style={{ color: C.red }}>
                     <span>Margin (150%)</span>
                     <span className="font-mono font-semibold">
-                      {'\u20B9'}{(totalValue * 1.5).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                      {formatINRWhole(totalValue * 1.5)}
                     </span>
                   </div>
                 )}

@@ -36,7 +36,7 @@ import { useAuthStore } from '@/lib/auth-store'
 import { useAppStore } from '@/lib/store'
 import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { toast } from 'sonner'
-import { formatINR, formatPnL, formatPercent } from '@/lib/format'
+import { formatINR, formatPnL, formatPercent, formatPrice, formatVolume, formatLargeNumber } from '@/lib/format'
 
 // ─── Types ───────────────────────────────────────────────────────────
 type Instrument = 'NIFTY' | 'BANKNIFTY' | 'FINNIFTY' | 'SENSEX' | 'MIDCPNIFTY'
@@ -375,7 +375,7 @@ export function FuturesPage() {
                   </div>
                   <div>
                     <div className="text-xs text-[#6b7280]">LTP</div>
-                    <div className="font-mono font-tabular font-bold text-[#1a1a1a]">₹{contract.ltp.toLocaleString()}</div>
+                    <div className="font-mono font-tabular font-bold text-[#1a1a1a]">{formatINR(contract.ltp)}</div>
                   </div>
                   <div>
                     <div className="text-xs text-[#6b7280]">Change</div>
@@ -384,7 +384,7 @@ export function FuturesPage() {
                       contract.changePct > 0 ? 'text-[#00B386]' : contract.changePct < 0 ? 'text-[#EB5B3C]' : 'text-[#6b7280]'
                     )}>
                       {formatPercent(contract.changePct)}
-                      <span className="ml-1 text-xs">({contract.change > 0 ? '+' : ''}{contract.change.toFixed(2)})</span>
+                      <span className="ml-1 text-xs">({contract.change >= 0 ? '+' : ''}{formatPrice(contract.change)})</span>
                     </div>
                   </div>
                   <div>
@@ -393,7 +393,7 @@ export function FuturesPage() {
                   </div>
                   <div>
                     <div className="text-xs text-[#6b7280]">Volume</div>
-                    <div className="font-mono font-tabular text-sm text-[#1a1a1a]">{(contract.volume / 1000).toFixed(1)}K</div>
+                    <div className="font-mono font-tabular text-sm text-[#1a1a1a]">{formatVolume(contract.volume)}</div>
                   </div>
                 </div>
               </TabsContent>
@@ -440,7 +440,7 @@ export function FuturesPage() {
                       tick={{ fontSize: 10, fill: '#6b7280' }}
                       tickLine={false}
                       axisLine={false}
-                      tickFormatter={(v: number) => `₹${(v / 1000).toFixed(1)}K`}
+                      tickFormatter={(v: number) => formatLargeNumber(v)}
                       width={55}
                     />
                     <Tooltip
@@ -451,7 +451,7 @@ export function FuturesPage() {
                         fontSize: '12px',
                         color: '#1a1a1a',
                       }}
-                      formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Price']}
+                      formatter={(value: number) => [formatINR(value), 'Price']}
                     />
                     <Area
                       type="monotone"
@@ -475,7 +475,7 @@ export function FuturesPage() {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <div className="bg-white border border-[#e5e7eb] p-3 rounded-xl text-center">
                 <div className="text-[10px] text-[#6b7280] uppercase tracking-wider mb-1">LTP</div>
-                <div className="font-mono font-tabular font-bold text-[#1a1a1a] text-lg">₹{selectedContract.ltp.toLocaleString()}</div>
+                <div className="font-mono font-tabular font-bold text-[#1a1a1a] text-lg">{formatINR(selectedContract.ltp)}</div>
               </div>
               <div className="bg-white border border-[#e5e7eb] p-3 rounded-xl text-center">
                 <div className="text-[10px] text-[#6b7280] uppercase tracking-wider mb-1">Change</div>
@@ -492,7 +492,7 @@ export function FuturesPage() {
               </div>
               <div className="bg-white border border-[#e5e7eb] p-3 rounded-xl text-center">
                 <div className="text-[10px] text-[#6b7280] uppercase tracking-wider mb-1">Volume</div>
-                <div className="font-mono font-tabular font-bold text-[#1a1a1a] text-lg">{(selectedContract.volume / 1000).toFixed(1)}K</div>
+                <div className="font-mono font-tabular font-bold text-[#1a1a1a] text-lg">{formatVolume(selectedContract.volume)}</div>
               </div>
               <div className="bg-white border border-[#e5e7eb] p-3 rounded-xl text-center">
                 <div className="text-[10px] text-[#6b7280] uppercase tracking-wider mb-1">Lot Size</div>
@@ -612,7 +612,7 @@ export function FuturesPage() {
                       type="number"
                       value={price}
                       onChange={(e) => setPrice(e.target.value)}
-                      placeholder={selectedContract.ltp.toFixed(2)}
+                      placeholder={formatPrice(selectedContract.ltp)}
                       className="font-mono font-tabular h-10 bg-white border-[#e5e7eb]"
                     />
                   </div>
@@ -630,7 +630,7 @@ export function FuturesPage() {
                   </div>
                   <div className="flex justify-between border-t border-[#e5e7eb] pt-2">
                     <span className="text-[#6b7280] font-semibold">Margin Required</span>
-                    <span className="font-mono font-tabular font-bold text-[#00D09C] text-base">₹{Number(marginRequired).toLocaleString()}</span>
+                    <span className="font-mono font-tabular font-bold text-[#00D09C] text-base">{formatINR(Number(marginRequired))}</span>
                   </div>
                 </div>
 
@@ -644,7 +644,7 @@ export function FuturesPage() {
                     'font-mono font-tabular font-bold text-sm',
                     availableMargin >= marginRequired ? 'text-[#00B386]' : 'text-[#EB5B3C]'
                   )}>
-                    ₹{availableMargin.toLocaleString()}
+                    {formatINR(availableMargin)}
                   </span>
                 </div>
 
@@ -750,16 +750,16 @@ export function FuturesPage() {
                           </Badge>
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono font-tabular text-[#1a1a1a]">{pos.lots || Math.round(pos.quantity / (pos.lotSize || 50))}</td>
-                        <td className="px-3 py-2.5 text-right font-mono font-tabular text-[#1a1a1a]">₹{pos.entryPrice.toLocaleString()}</td>
-                        <td className="px-3 py-2.5 text-right font-mono font-tabular text-[#1a1a1a]">₹{pos.currentPrice.toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-right font-mono font-tabular text-[#1a1a1a]">₹{formatPrice(pos.entryPrice)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono font-tabular text-[#1a1a1a]">₹{formatPrice(pos.currentPrice)}</td>
                         <td className={cn(
                           'px-3 py-2.5 text-right font-mono font-tabular font-bold',
                           isPositive ? 'text-[#00B386]' : 'text-[#EB5B3C]'
                         )}>
-                          {isPositive ? '+' : ''}₹{pos.unrealizedPnl.toLocaleString()}
+                          {formatPnL(pos.unrealizedPnl)}
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono font-tabular text-[#6b7280]">
-                          ₹{(pos.marginUsed || 0).toLocaleString()}
+                          {formatINR(pos.marginUsed || 0)}
                         </td>
                         <td className="px-3 py-2.5 text-center">
                           <Button
@@ -810,7 +810,7 @@ export function FuturesPage() {
                     </div>
                     <div className="flex justify-between text-xs text-[#6b7280] font-tabular">
                       <span>{pos.lots || Math.round(pos.quantity / (pos.lotSize || 50))} lot(s)</span>
-                      <span>₹{pos.entryPrice.toLocaleString()} → ₹{pos.currentPrice.toLocaleString()}</span>
+                      <span>₹{formatPrice(pos.entryPrice)} → ₹{formatPrice(pos.currentPrice)}</span>
                     </div>
                     <Button
                       variant="outline"
