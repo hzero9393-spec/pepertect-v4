@@ -35,6 +35,8 @@ class WebSocketClient {
   private status: WSStatus = 'disconnected'
   private subscribedChannels = new Set<string>()  // track what we've subscribed to
   private channelParams = new Map<string, any>()   // options channel needs params
+  private authResolved = false                     // true after server sends auth:success
+  private pendingMessages: object[] = []            // queue subscribe msgs until auth done
 
   // Message handlers keyed by message type (e.g. "market:update", "positions", "exit")
   private handlers = new Map<string, Set<MsgHandler>>()
@@ -58,10 +60,13 @@ class WebSocketClient {
       this.ws = new WebSocket(url)
 
       this.ws.onopen = () => {
+        this.authResolved = false
+        this.pendingMessages = []
         this.setStatus('connected')
         console.log('[WS Client] Connected')
 
         // Re-subscribe to all channels after reconnect
+        // These will be queued until auth:success arrives
         for (const channel of this.subscribedChannels) {
           const params = this.channelParams.get(channel)
           this.sendRaw({ type: 'subscribe', channel, params })
@@ -130,9 +135,14 @@ class WebSocketClient {
   // ─── Message Handling ───────────────────────────────────────────────
 
   private handleMessage(msg: ServerMessage) {
-    // Handle auth response
+    // Handle auth response — flush queued subscribe messages
     if (msg.type === 'auth:success') {
       console.log(`[WS Client] Authenticated as ${msg.userId}`)
+      this.authResolved = true
+      for (const m of this.pendingMessages) {
+        this.ws?.send(JSON.stringify(m))
+      }
+      this.pendingMessages = []
       return
     }
 
@@ -197,6 +207,12 @@ class WebSocketClient {
 
   private sendRaw(msg: object) {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      // Queue subscribe/unsubscribe messages until auth is resolved
+      const type = (msg as any).type
+      if (!this.authResolved && (type === 'subscribe' || type === 'unsubscribe')) {
+        this.pendingMessages.push(msg)
+        return
+      }
       this.ws.send(JSON.stringify(msg))
     }
   }
