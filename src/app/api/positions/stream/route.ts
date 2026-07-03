@@ -37,8 +37,11 @@ interface PositionUpdate {
   }
 }
 
-// Track which underlyings we've ensured OC polling for (per SSE connection)
+// Track which underlying+expiry combos we've ensured OC polling for (per SSE connection)
 const ensuredOcPolling = new Set<string>()
+
+// Store unsub functions for cleanup when SSE disconnects
+const ocUnsubs: (() => void)[] = []
 
 async function getLivePrice(
   segment: string,
@@ -56,57 +59,61 @@ async function getLivePrice(
     if (cached?.currentPrice && cached.currentPrice > 0) return cached.currentPrice
   } else if (segment === 'OPTIONS' && optionType && strikePrice) {
     const ocManager = getOptionChainManager()
-
-    // ─── Ensure OC is polling for this underlying ──────────────────
-    // The OC manager only polls when there are subscribers (from option-chain page).
-    // When a user has open option positions but isn't on the OC page, we must
-    // trigger polling here so that latestData stays fresh.
     const upperSymbol = symbol.toUpperCase()
-    const ocKey = `${upperSymbol}::`
-    if (!ensuredOcPolling.has(upperSymbol)) {
-      ensuredOcPolling.add(upperSymbol)
-      // Get the nearest expiry for this underlying
-      try {
-        const nearestExpiry = await ocManager.getExpiries(upperSymbol)
-        if (nearestExpiry.length > 0) {
-          // Subscribe with a no-op handler just to trigger polling
-          const unsub = ocManager.subscribe(upperSymbol, nearestExpiry[0], () => {})
-          // Store unsubscribe for later cleanup — we keep it alive for the
-          // duration of the SSE connection since positions may exist.
-          ;(ocManager as any)._positionPollUnsubs = (ocManager as any)._positionPollUnsubs || []
-          ;(ocManager as any)._positionPollUnsubs.push(unsub)
-        }
-      } catch { /* ignore */ }
+
+    // ─── Normalize expiry from DB Date to YYYY-MM-DD string ───────
+    const expiryStr = expiryDate ? new Date(expiryDate).toISOString().split('T')[0] : null
+
+    // ─── Ensure OC is polling for the position's specific expiry ──
+    // Key fix: subscribe per unique underlying+expiry combo, not just per underlying.
+    // This ensures that if a position is on next-week's expiry, we poll THAT expiry.
+    if (expiryStr) {
+      const pollKey = `${upperSymbol}::${expiryStr}`
+      if (!ensuredOcPolling.has(pollKey)) {
+        ensuredOcPolling.add(pollKey)
+        try {
+          const unsub = ocManager.subscribe(upperSymbol, expiryStr, () => {})
+          ocUnsubs.push(unsub)
+        } catch { /* ignore */ }
+      }
+    } else {
+      // No expiry stored — fall back to nearest expiry for this underlying
+      const fallbackKey = `${upperSymbol}::`
+      if (!ensuredOcPolling.has(fallbackKey)) {
+        ensuredOcPolling.add(fallbackKey)
+        try {
+          const expiries = await ocManager.getExpiries(upperSymbol)
+          if (expiries.length > 0) {
+            const unsub = ocManager.subscribe(upperSymbol, expiries[0], () => {})
+            ocUnsubs.push(unsub)
+          }
+        } catch { /* ignore */ }
+      }
     }
 
     // ─── Look up from OC manager's latestData ──────────────────────
     const expiryMap = (ocManager as any).latestData as Map<string, any> | undefined
     if (expiryMap && expiryMap.size > 0) {
-      // Prefer exact expiry match if we have expiryDate
-      const expiryStr = expiryDate ? new Date(expiryDate).toISOString().split('T')[0] : null
+      // Try ALL expiries for this underlying — match by underlying + strike + optionType
+      for (const [key, data] of expiryMap) {
+        if (data.underlying !== upperSymbol || !data.strikes) continue
 
-      // First try: exact expiry match
-      if (expiryStr) {
-        for (const [key, data] of expiryMap) {
-          if (
-            data.underlying === upperSymbol &&
-            data.expiry === expiryStr &&
-            data.strikes
-          ) {
-            const strike = data.strikes.find((s: any) => s.strike_price === strikePrice)
-            if (strike) {
-              const optData = optionType === 'CE'
-                ? strike.call_options?.market_data
-                : strike.put_options?.market_data
-              if (optData?.ltp && optData.ltp > 0) return optData.ltp
-            }
-          }
+        // If we have an expiryStr, prefer exact match; also try other expiries as fallback
+        if (expiryStr && data.expiry !== expiryStr) continue
+
+        const strike = data.strikes.find((s: any) => s.strike_price === strikePrice)
+        if (strike) {
+          const optData = optionType === 'CE'
+            ? strike.call_options?.market_data
+            : strike.put_options?.market_data
+          if (optData?.ltp && optData.ltp > 0) return optData.ltp
         }
       }
 
-      // Fallback: any expiry for this underlying (first match)
-      for (const [key, data] of expiryMap) {
-        if (data.underlying === upperSymbol && data.strikes) {
+      // Fallback: try any expiry for this underlying if exact expiry didn't match
+      if (expiryStr) {
+        for (const [key, data] of expiryMap) {
+          if (data.underlying !== upperSymbol || !data.strikes || data.expiry === expiryStr) continue
           const strike = data.strikes.find((s: any) => s.strike_price === strikePrice)
           if (strike) {
             const optData = optionType === 'CE'
@@ -266,6 +273,12 @@ export async function GET(request: Request) {
     running = false
     unsubscribe()
     clearInterval(keepAlive)
+    // Clean up OC polling subscriptions we created
+    while (ocUnsubs.length > 0) {
+      const unsub = ocUnsubs.pop()
+      if (unsub) unsub()
+    }
+    ensuredOcPolling.clear()
     try { writer.close() } catch {}
   }
 
