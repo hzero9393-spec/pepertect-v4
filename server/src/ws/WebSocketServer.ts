@@ -5,6 +5,13 @@ import { verifyToken, type JwtPayload } from '../lib/auth.js'
 import { logger } from '../lib/logger.js'
 import { type ConnectedClient, type ClientMessage, type ServerMessage } from './types.js'
 
+export type ChannelEvent = {
+  action: 'subscribe' | 'unsubscribe'
+  channel: string
+  userId: string
+  clientId: string
+}
+
 export class PepertectWebSocketServer {
   private wss: WSServer
   private clients: Map<string, ConnectedClient> = new Map()  // clientId → client
@@ -12,11 +19,25 @@ export class PepertectWebSocketServer {
   private channelSubscribers: Map<string, Set<string>> = new Map()  // channel → Set of clientIds
   private heartbeatInterval: ReturnType<typeof setInterval>
   private nextClientId = 0
+  private channelListeners: ((event: ChannelEvent) => void)[] = []
 
   constructor(wss: WSServer) {
     this.wss = wss
     this.setupConnectionHandler()
     this.heartbeatInterval = setInterval(() => this.heartbeat(), 30_000)
+  }
+
+  /** Register a callback for channel subscribe/unsubscribe events */
+  onChannelChange(listener: (event: ChannelEvent) => void): () => void {
+    this.channelListeners.push(listener)
+    return () => {
+      this.channelListeners = this.channelListeners.filter(l => l !== listener)
+    }
+  }
+
+  /** Get the set of active channel names */
+  getActiveChannels(): string[] {
+    return [...this.channelSubscribers.keys()].filter(ch => (this.channelSubscribers.get(ch)?.size ?? 0) > 0)
   }
 
   // ─── Client ID Generation ────────────────────────────────────────────
@@ -121,6 +142,10 @@ export class PepertectWebSocketServer {
             this.channelSubscribers.set(channel, new Set())
           }
           this.channelSubscribers.get(channel)!.add(client.id)
+          // Notify channel listeners
+          for (const listener of this.channelListeners) {
+            try { listener({ action: 'subscribe', channel, userId: client.userId, clientId: client.id }) } catch {}
+          }
         }
         this.send(client, { type: 'subscribed', data: { channels: msg.channels } })
         logger.debug(`[WS] ${client.id} subscribed to: ${msg.channels.join(', ')}`)
@@ -130,6 +155,10 @@ export class PepertectWebSocketServer {
         for (const channel of msg.channels) {
           client.channels.delete(channel)
           this.channelSubscribers.get(channel)?.delete(client.id)
+          // Notify channel listeners
+          for (const listener of this.channelListeners) {
+            try { listener({ action: 'unsubscribe', channel, userId: client.userId, clientId: client.id }) } catch {}
+          }
         }
         this.send(client, { type: 'unsubscribed', data: { channels: msg.channels } })
         break
@@ -178,9 +207,16 @@ export class PepertectWebSocketServer {
       }
     }
 
-    // Remove from all channel subscriber sets
+    // Remove from all channel subscriber sets and notify listeners
     for (const channel of client.channels) {
       this.channelSubscribers.get(channel)?.delete(clientId)
+      // Notify channel listeners about cleanup
+      const subs = this.channelSubscribers.get(channel)?.size ?? 0
+      if (subs === 0 && client.userId) {
+        for (const listener of this.channelListeners) {
+          try { listener({ action: 'unsubscribe', channel, userId: client.userId, clientId }) } catch {}
+        }
+      }
     }
 
     this.clients.delete(clientId)
