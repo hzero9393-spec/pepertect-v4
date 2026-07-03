@@ -135,6 +135,7 @@ export function OptionChainPage() {
   const [data, setData] = useState<OCUpdate | null>(null)
   const [live, setLive] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [ocError, setOcError] = useState<'upstox_token' | 'timeout' | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('LTP')
   // WebSocket connection managed by wsClient singleton
   const tableBodyRef = useRef<HTMLDivElement>(null)
@@ -191,19 +192,38 @@ export function OptionChainPage() {
     if (!expiry) return
 
     let cancelled = false
+    setOcError(null) // Reset error on new subscription
 
     wsClient.subscribe('options', { underlying: index, expiry })
 
     const unsub = wsClient.on('options:update', (msg) => {
       if (!cancelled && msg && msg.underlying?.toUpperCase() === index.toUpperCase() && msg.expiry === expiry) {
         setData(msg)
+        setOcError(null) // Clear error when data arrives
       }
     })
+
+    // Listen for server-side token error
+    const unsubError = wsClient.on('options:error', (msg) => {
+      if (!cancelled && msg?.message === 'UPSTOX_TOKEN_MISSING') {
+        setOcError('upstox_token')
+      }
+    })
+
+    // Timeout: if no data in 5s, show error
+    const timeout = setTimeout(() => {
+      if (!cancelled && !data) {
+        setOcError('timeout')
+      }
+    }, 5000)
+
     setLive(true)
 
     return () => {
       cancelled = true
       unsub()
+      unsubError()
+      clearTimeout(timeout)
       wsClient.unsubscribe('options')
       setLive(false)
     }
@@ -675,6 +695,20 @@ export function OptionChainPage() {
                   Puts
                 </span>
                 <span>ATM highlighted</span>
+              </div>
+            </div>
+          </div>
+        ) : ocError ? (
+          <div className="flex-1 flex items-center justify-center p-6">
+            <div className="text-center max-w-sm">
+              <div className="text-[28px] mb-2">&#9888;&#65039;</div>
+              <div className="text-[13px] font-medium mb-1" style={{ color: C.text }}>
+                {ocError === 'upstox_token' ? 'Upstox Token Required' : 'Data Not Available'}
+              </div>
+              <div className="text-[11px] leading-relaxed" style={{ color: C.textDim }}>
+                {ocError === 'upstox_token'
+                  ? 'Option chain data requires a valid Upstox access token. Please connect your Upstox account or set the token via admin settings.'
+                  : 'Could not load option chain data. This may be due to a network issue or the data source is unavailable. Please try again.'}
               </div>
             </div>
           </div>

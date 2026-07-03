@@ -14,6 +14,8 @@
  *   Server → Client:  { type: "ping" }
  *   Server → Client:  { type: "error", message: "..." }
  *   Server → Client:  { type: "auth:success" }
+ *   Server → Client:  { type: "upstox_token_set", success: true }
+ *   Client → Server:  { type: "set_upstox_token", token: "..." }  (push Upstox token)
  */
 
 import WebSocket from 'ws'
@@ -24,6 +26,7 @@ import { MarketDataService } from '../services/marketData'
 import { PositionsService } from '../services/positions'
 import { OptionChainService } from '../services/optionChain'
 import { AutoExitService } from '../services/autoExit'
+import { setUpstoxToken } from '../lib/token-provider'
 
 export interface ClientConnection {
   ws: WebSocket
@@ -174,6 +177,33 @@ export class WebSocketManager {
       case 'pong':
         client.lastPing = Date.now()
         break
+
+      case 'set_upstox_token':
+        // Allow authenticated users to push Upstox token from frontend
+        if (!client.isAuthenticated) {
+          this.send(client.ws, { type: 'error', message: 'Authenticate first' })
+          return
+        }
+        if (msg.token && typeof msg.token === 'string' && msg.token.length > 10) {
+          setUpstoxToken(msg.token)
+          // Also persist to DB
+          db.platformSettings.upsert({
+            where: { key: 'upstox_access_token' },
+            update: { value: msg.token },
+            create: { key: 'upstox_access_token', value: msg.token, description: 'Upstox token pushed via WebSocket' },
+          }).then(() => {
+            db.platformSettings.upsert({
+              where: { key: 'upstox_token_obtained_at' },
+              update: { value: new Date().toISOString() },
+              create: { key: 'upstox_token_obtained_at', value: new Date().toISOString(), description: 'Token timestamp' },
+            }).catch(() => {})
+          }).catch(() => {})
+          this.send(client.ws, { type: 'upstox_token_set', success: true })
+          console.log(`[WS Manager] Upstox token set by user ${client.userId} via WS (prefix: ${msg.token.substring(0, 8)}...)`)
+        } else {
+          this.send(client.ws, { type: 'error', message: 'Invalid token format' })
+        }
+        break
     }
   }
 
@@ -199,6 +229,12 @@ export class WebSocketManager {
       case 'options':
         if (params?.underlying && params?.expiry) {
           this.optionChainService.addClient(client, params.underlying, params.expiry)
+          // Async check for token availability — notify client if missing
+          import('../lib/token-provider').then(({ getUpstoxToken }) =>
+            getUpstoxToken().then(token => {
+              if (!token) this.send(client.ws, { type: 'options:error', message: 'UPSTOX_TOKEN_MISSING' })
+            })
+          )
         }
         break
     }
