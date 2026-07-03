@@ -37,6 +37,7 @@ import { useAppStore } from '@/lib/store'
 import { toast } from 'sonner'
 import { formatINR, formatINRWhole, formatPrice, formatPnL, formatPercent } from '@/lib/format'
 import { useStockData } from '@/hooks/use-market-data'
+import { StrikeOverviewDrawer } from '@/components/pepertect/ui/strike-overview-drawer'
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -173,6 +174,7 @@ const OpenPositionCard = memo(function OpenPositionCard({
   onSquareOff,
   isSquaringOff,
   onViewDetails,
+  onViewStrikeChart,
 }: {
   pos: PositionData
   livePrice: number
@@ -182,6 +184,7 @@ const OpenPositionCard = memo(function OpenPositionCard({
   onSquareOff: (id: string, symbol: string) => void
   isSquaringOff: boolean
   onViewDetails: (pos: PositionData) => void
+  onViewStrikeChart?: (pos: PositionData) => void
 }) {
   const isLong = pos.tradeDirection === 'BUY'
 
@@ -201,7 +204,16 @@ const OpenPositionCard = memo(function OpenPositionCard({
       <div className="flex items-start justify-between p-4 pb-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-bold text-[15px] text-[#1a1a1a] truncate">{pos.symbol}</span>
+            {pos.segment === 'OPTIONS' && onViewStrikeChart ? (
+              <button
+                className="font-bold text-[15px] text-[#1a1a1a] truncate hover:text-[#00D09C] transition-colors text-left"
+                onClick={() => onViewStrikeChart(pos)}
+              >
+                {pos.symbol}
+              </button>
+            ) : (
+              <span className="font-bold text-[15px] text-[#1a1a1a] truncate">{pos.symbol}</span>
+            )}
             <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase shrink-0 ${
               isLong
                 ? 'bg-[#00B386]/10 text-[#00B386]'
@@ -225,7 +237,12 @@ const OpenPositionCard = memo(function OpenPositionCard({
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-[#6b7280]">
             {pos.segment === 'OPTIONS' && pos.strikePrice && (
-              <span>{pos.strikePrice} {pos.optionType}</span>
+              <button
+                className="text-[#00D09C] font-semibold hover:underline"
+                onClick={() => onViewStrikeChart?.(pos)}
+              >
+                {pos.strikePrice} {pos.optionType}
+              </button>
             )}
             {pos.segment === 'FUTURES' && <span>FUT</span>}
             <span>·</span>
@@ -803,6 +820,25 @@ export function PositionsPage() {
   const [detailPosition, setDetailPosition] = useState<PositionData | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
 
+  // ─── Strike Overview (for OPTIONS positions) ──────────────────
+  const [strikeOverview, setStrikeOverview] = useState<{
+    underlying: string
+    strike: number
+    optionType: 'CE' | 'PE'
+    instrumentKey: string
+    ltp: number
+    greeks: { iv: number; delta: number; theta: number; vega: number; gamma: number; pop: number } | null
+    marketData: { volume: number; oi: number; prev_oi: number; close_price: number; bid_price: number; ask_price: number; bid_qty: number; ask_qty: number } | null
+    spot: number
+  } | null>(null)
+  // Cache OC data (strike → { instrumentKey, greeks, marketData, spot })
+  const ocDataCacheRef = useRef<Map<string, {
+    instrumentKey: string
+    greeks: any
+    marketData: any
+    spot: number
+  }>>(new Map())
+
   // ─── Real-Time Market Data ──────────────────────────────────
   const { stocks: wsStockQuotes, status: wsStatus, marketClosed } = useStockData()
 
@@ -1083,6 +1119,25 @@ export function PositionsPage() {
           const strikes: any[] = msg.data.strikes
           let hasChanges = false
 
+          // Cache OC data for strike overview (instrumentKey, greeks, marketData)
+          const spot = msg.data.spot || 0
+          for (const s of strikes) {
+            const ceKey = `${underlying}::${expiry}::${s.strike_price}::CE`
+            const peKey = `${underlying}::${expiry}::${s.strike_price}::PE`
+            ocDataCacheRef.current.set(ceKey, {
+              instrumentKey: s.call_options?.instrument_key || '',
+              greeks: s.call_options?.option_greeks || null,
+              marketData: s.call_options?.market_data || null,
+              spot,
+            })
+            ocDataCacheRef.current.set(peKey, {
+              instrumentKey: s.put_options?.instrument_key || '',
+              greeks: s.put_options?.option_greeks || null,
+              marketData: s.put_options?.market_data || null,
+              spot,
+            })
+          }
+
           // Match strikes against our option positions (read from ref for freshness)
           const currentPositions = positionsRef.current
           for (const pos of currentPositions) {
@@ -1173,6 +1228,26 @@ export function PositionsPage() {
     setDetailPosition(pos)
     setDetailOpen(true)
   }, [])
+
+  // ─── Open Strike Overview from OPTIONS position ──────────────
+  const handleOpenStrikeOverview = useCallback((pos: PositionData) => {
+    if (pos.segment !== 'OPTIONS' || !pos.strikePrice || !pos.expiryDate || !pos.optionType) return
+    const expiry = new Date(pos.expiryDate).toISOString().split('T')[0]
+    const cacheKey = `${pos.symbol.toUpperCase()}::${expiry}::${pos.strikePrice}::${pos.optionType}`
+    const cached = ocDataCacheRef.current.get(cacheKey)
+    if (cached && cached.instrumentKey) {
+      setStrikeOverview({
+        underlying: pos.symbol.toUpperCase(),
+        strike: pos.strikePrice,
+        optionType: pos.optionType as 'CE' | 'PE',
+        instrumentKey: cached.instrumentKey,
+        ltp: cached.marketData?.ltp || livePrices[pos.id] || pos.currentPrice,
+        greeks: cached.greeks,
+        marketData: cached.marketData,
+        spot: cached.spot,
+      })
+    }
+  }, [livePrices])
 
   // ─── Split positions by open/closed and segment ───────────
   const openStockPositions = useMemo(() =>
@@ -1409,6 +1484,7 @@ export function PositionsPage() {
                     onSquareOff={handleSquareOff}
                     isSquaringOff={squaringOff === pos.id}
                     onViewDetails={handleViewDetails}
+                    onViewStrikeChart={handleOpenStrikeOverview}
                   />
                 )
               })}
@@ -1446,6 +1522,23 @@ export function PositionsPage() {
         onSquareOff={handleSquareOff}
         isSquaringOff={squaringOff === detailPosition?.id}
       />
+
+      {/* ── Strike Overview Drawer (OPTIONS only) ─────────────── */}
+      {strikeOverview && (
+        <StrikeOverviewDrawer
+          open={!!strikeOverview}
+          onOpenChange={(open) => { if (!open) setStrikeOverview(null) }}
+          underlying={strikeOverview.underlying}
+          strike={strikeOverview.strike}
+          optionType={strikeOverview.optionType}
+          expiry={''}
+          instrumentKey={strikeOverview.instrumentKey}
+          ltp={strikeOverview.ltp}
+          greeks={strikeOverview.greeks}
+          marketData={strikeOverview.marketData}
+          spot={strikeOverview.spot}
+        />
+      )}
 
       {/* ── Sticky Footer ────────────────────────────────────── */}
       <footer className="mt-auto border-t border-[#e5e7eb] bg-white px-4 py-3">
