@@ -816,11 +816,17 @@ export function PositionsPage() {
   const [livePrices, setLivePrices] = useState<Record<string, number>>({})
   const [prevPnlMap, setPrevPnlMap] = useState<Record<string, number>>({})
 
-  // Update live prices from market data (only when price actually changes AND market is open)
-  // Uses pos.id as key for ALL segments (equity, futures, options)
-  // This prevents different strikes of the same underlying from overwriting each other
+  // Keep positions in a ref so OC handler always sees latest data
+  const positionsRef = useRef<PositionData[]>([])
+  positionsRef.current = positions
+
+  // Track OC SSE connections by combo key ("NIFTY::2026-07-07")
+  const ocSourcesRef = useRef<Map<string, EventSource>>(new Map())
+
+  // ─── Update EQUITY live prices from WebSocket stock quotes ──────
+  // Only EQUITY segment uses wsStockQuotes. OPTIONS use OC SSE (below),
+  // FUTURES use the server SSE stream.
   useEffect(() => {
-    // Don't update live prices if market is closed
     if (!marketOpen) return
     if (wsStatus !== 'connected') return
 
@@ -830,30 +836,26 @@ export function PositionsPage() {
 
     for (const pos of positions) {
       if (!pos.isOpen && pos.isOpen !== undefined) continue
+      if (pos.segment !== 'EQUITY') continue
 
-      if (pos.segment === 'EQUITY') {
-        const quote = wsStockQuotes[pos.symbol]
-        if (quote && quote.last_price > 0) {
-          const newPrice = quote.last_price
-          const currentLive = livePricesRef.current[pos.id]
-          if (currentLive !== newPrice) {
-            if (currentLive !== undefined) {
-              prevPricesRef.current[pos.id] = currentLive
-            }
-            if (currentLive !== undefined && currentLive > 0) {
-              const prevPnl = pos.tradeDirection === 'BUY'
-                ? (currentLive - pos.entryPrice) * pos.quantity
-                : (pos.entryPrice - currentLive) * pos.quantity
-              pnlUpdates[pos.id] = Math.round(prevPnl * 100) / 100
-            }
-            priceUpdates[pos.id] = newPrice
-            hasChanges = true
+      const quote = wsStockQuotes[pos.symbol]
+      if (quote && quote.last_price > 0) {
+        const newPrice = quote.last_price
+        const currentLive = livePricesRef.current[pos.id]
+        if (currentLive !== newPrice) {
+          if (currentLive !== undefined) {
+            prevPricesRef.current[pos.id] = currentLive
           }
+          if (currentLive !== undefined && currentLive > 0) {
+            const prevPnl = pos.tradeDirection === 'BUY'
+              ? (currentLive - pos.entryPrice) * pos.quantity
+              : (pos.entryPrice - currentLive) * pos.quantity
+            pnlUpdates[pos.id] = Math.round(prevPnl * 100) / 100
+          }
+          priceUpdates[pos.id] = newPrice
+          hasChanges = true
         }
       }
-      // For OPTIONS and FUTURES, prices come from the SSE positions stream,
-      // not from wsStockQuotes (which only has equity/index spot prices).
-      // So we don't update them here — the SSE handler below does it.
     }
 
     if (hasChanges) {
@@ -909,8 +911,9 @@ export function PositionsPage() {
     return () => {}
   }, [fetchPositions])
 
-  // ─── SSE Position Stream (REAL-TIME PRICES + P&L) ──────────
-  // Server pushes live prices every 500ms + instant exit events
+  // ─── SSE Position Stream (EQUITY prices + exit events) ──────
+  // Server pushes EQUITY live prices + exit events.
+  // OPTIONS prices come from OC SSE (separate effect below).
   useEffect(() => {
     if (!token) return
 
@@ -921,49 +924,43 @@ export function PositionsPage() {
         const msg = JSON.parse(event.data)
 
         if (msg.type === 'positions' && msg.data) {
-          // Update live prices from server (keyed by positionId)
-          const updates: Record<string, number> = {}
+          const priceUpdates: Record<string, number> = {}
           const pnlUpdates: Record<string, number> = {}
-          const pnlPercentUpdates: Record<string, number> = {}
           const exitEvents: Record<string, { reason: string; exitPrice: number; pnl: number; timestamp: number }> = {}
 
           for (const update of msg.data) {
-            // Track previous price for flash animation
+            // OPTIONS: price comes from OC SSE — skip server price, only handle exits
+            if (update.segment === 'OPTIONS') {
+              if (update.exitEvent) {
+                exitEvents[update.positionId] = update.exitEvent
+              }
+              continue
+            }
+
+            // EQUITY / FUTURES: use server price
             const prevLive = livePricesRef.current[update.positionId]
             if (prevLive !== undefined && prevLive !== update.currentPrice) {
               prevPricesRef.current[update.positionId] = prevLive
-              // Track previous P&L for flash animation
-              if (prevLive > 0) {
-                const direction = update.tradeDirection
-                const qty = 0 // We don't have qty here, but P&L updates are sent from server
-                // Server sends correct unrealizedPnl, so just track previous
-              }
             }
 
-            // Store live price keyed by positionId
-            updates[update.positionId] = update.currentPrice
+            priceUpdates[update.positionId] = update.currentPrice
             pnlUpdates[update.positionId] = update.unrealizedPnl
-            pnlPercentUpdates[update.positionId] = update.unrealizedPnlPercent
 
-            // Check for exit event
             if (update.exitEvent) {
               exitEvents[update.positionId] = update.exitEvent
             }
           }
 
-          if (Object.keys(updates).length > 0) {
-            // Update ref and state
-            livePricesRef.current = { ...livePricesRef.current, ...updates }
-            setLivePrices(prev => ({ ...prev, ...updates }))
+          if (Object.keys(priceUpdates).length > 0) {
+            livePricesRef.current = { ...livePricesRef.current, ...priceUpdates }
+            setLivePrices(prev => ({ ...prev, ...priceUpdates }))
             setPrevPnlMap(prev => ({ ...prev, ...pnlUpdates }))
-            // Update positions with new prices
             setPositions(prev => prev.map(pos => {
-              if (updates[pos.id] !== undefined) {
+              if (priceUpdates[pos.id] !== undefined) {
                 return {
                   ...pos,
-                  currentPrice: updates[pos.id],
+                  currentPrice: priceUpdates[pos.id],
                   unrealizedPnl: pnlUpdates[pos.id] ?? pos.unrealizedPnl,
-                  unrealizedPnlPercent: pnlPercentUpdates[pos.id] ?? pos.unrealizedPnlPercent,
                 }
               }
               return pos
@@ -977,7 +974,6 @@ export function PositionsPage() {
               description: `P&L: ${formatPnL(evt.pnl)}`,
               duration: 5000,
             })
-            // Refetch after a short delay to get updated position list
             setTimeout(() => fetchPositions(), 500)
           }
         }
@@ -1012,6 +1008,113 @@ export function PositionsPage() {
       eventSource.close()
     }
   }, [token, fetchPositions])
+
+  // ─── OPTIONS: Subscribe to Option Chain SSE for real-time strike LTP ──
+  // Instead of server making separate API calls, we subscribe directly to
+  // the option chain stream and extract our strike's LTP from the data.
+  //
+  // Uses a memoized combo key string so the effect only re-runs when the
+  // actual underlying+expiry combos change (new trade, close, expiry change).
+  // This prevents OC EventSources from being torn down on every price tick.
+
+  const ocComboStr = useMemo(() => {
+    const keys = new Set<string>()
+    for (const pos of positions) {
+      if (pos.isOpen && pos.segment === 'OPTIONS' && pos.strikePrice && pos.expiryDate) {
+        const expiry = new Date(pos.expiryDate).toISOString().split('T')[0]
+        keys.add(`${pos.symbol.toUpperCase()}::${expiry}`)
+      }
+    }
+    return [...keys].sort().join(',')
+  }, [positions])
+
+  useEffect(() => {
+    if (!marketOpen) {
+      // Close all OC subscriptions when market closes
+      for (const es of ocSourcesRef.current.values()) es.close()
+      ocSourcesRef.current.clear()
+      return
+    }
+
+    const neededKeys = new Set(ocComboStr.split(',').filter(Boolean))
+
+    // Close OC sources no longer needed
+    for (const [key, es] of ocSourcesRef.current) {
+      if (!neededKeys.has(key)) {
+        es.close()
+        ocSourcesRef.current.delete(key)
+      }
+    }
+
+    // Create OC sources for new combos
+    for (const key of neededKeys) {
+      if (ocSourcesRef.current.has(key)) continue
+      const [underlying, expiry] = key.split('::')
+      const es = new EventSource(`/api/options/stream?underlying=${underlying}&expiry=${expiry}`)
+
+      es.addEventListener('message', (event: MessageEvent) => {
+        try {
+          const msg = JSON.parse(event.data)
+          if (msg.type !== 'update' || !msg.data?.strikes) return
+
+          const strikes: any[] = msg.data.strikes
+          const priceUpdates: Record<string, number> = {}
+          const pnlUpdates: Record<string, number> = {}
+          let hasChanges = false
+
+          // Match strikes against our option positions (read from ref for freshness)
+          const currentPositions = positionsRef.current
+          for (const pos of currentPositions) {
+            if (!pos.isOpen || pos.segment !== 'OPTIONS' || !pos.strikePrice) continue
+
+            // Check this position belongs to this OC combo
+            const posExpiry = pos.expiryDate ? new Date(pos.expiryDate).toISOString().split('T')[0] : null
+            if (pos.symbol.toUpperCase() !== underlying || posExpiry !== expiry) continue
+
+            const strike = strikes.find((s: any) => s.strike_price === pos.strikePrice)
+            if (!strike) continue
+
+            const optData = pos.optionType === 'CE'
+              ? strike.call_options?.market_data
+              : strike.put_options?.market_data
+            if (!optData?.ltp || optData.ltp <= 0) continue
+
+            const newPrice = optData.ltp
+            const currentLive = livePricesRef.current[pos.id]
+            if (currentLive !== newPrice) {
+              if (currentLive !== undefined) {
+                prevPricesRef.current[pos.id] = currentLive
+              }
+              if (currentLive !== undefined && currentLive > 0) {
+                const prevPnl = pos.tradeDirection === 'BUY'
+                  ? (currentLive - pos.entryPrice) * pos.quantity
+                  : (pos.entryPrice - currentLive) * pos.quantity
+                pnlUpdates[pos.id] = Math.round(prevPnl * 100) / 100
+              }
+              priceUpdates[pos.id] = newPrice
+              hasChanges = true
+            }
+          }
+
+          if (hasChanges) {
+            livePricesRef.current = { ...livePricesRef.current, ...priceUpdates }
+            setLivePrices(prev => ({ ...prev, ...priceUpdates }))
+            if (Object.keys(pnlUpdates).length > 0) {
+              prevPnlRef.current = { ...prevPnlRef.current, ...pnlUpdates }
+              setPrevPnlMap(prev => ({ ...prev, ...pnlUpdates }))
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      })
+
+      ocSourcesRef.current.set(key, es)
+    }
+
+    return () => {
+      for (const es of ocSourcesRef.current.values()) es.close()
+      ocSourcesRef.current.clear()
+    }
+  }, [ocComboStr, marketOpen])
 
   // ─── Square Off ───────────────────────────────────────────
   const handleSquareOff = useCallback(async (positionId: string, symbol: string) => {
