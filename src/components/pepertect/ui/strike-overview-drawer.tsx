@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Sheet,
   SheetContent,
@@ -8,18 +8,6 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-import {
-  createChart,
-  type IChartApi,
-  type CandlestickData,
-  type HistogramData,
-  type Time,
-  ColorType,
-  CrosshairMode,
-  CandlestickSeries,
-  LineSeries,
-  HistogramSeries,
-} from 'lightweight-charts'
 import {
   TrendingUp,
   TrendingDown,
@@ -38,7 +26,7 @@ import {
   CandlestickChart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatPrice, formatINRWhole, formatPercent, formatNumber } from '@/lib/format'
+import { formatPrice, formatPercent, formatNumber } from '@/lib/format'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -103,14 +91,12 @@ function formatExpiry(isoStr: string): string {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-function parseTime(dateStr: string, range: RangeOption): Time {
+function parseTime(dateStr: string, range: RangeOption): number | string {
   const d = new Date(dateStr)
   if (range === '1M') {
-    // Daily data: YYYY-MM-DD string
-    return d.toISOString().split('T')[0] as Time
+    return d.toISOString().split('T')[0]
   }
-  // Intraday: UNIX timestamp in seconds
-  return Math.floor(d.getTime() / 1000) as Time
+  return Math.floor(d.getTime() / 1000)
 }
 
 // ─── Greeks Card ────────────────────────────────────────────────────────────
@@ -149,7 +135,7 @@ function GreeksCard({ greeks }: { greeks: NonNullable<StrikeOverviewProps['greek
   )
 }
 
-// ─── Lightweight Chart Component ────────────────────────────────────────────
+// ─── Lightweight Chart Component (dynamic import to avoid SSR crash) ────────
 
 function StrikeChart({
   data,
@@ -163,7 +149,8 @@ function StrikeChart({
   range: RangeOption
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const chartRef = useRef<IChartApi | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chartRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mainSeriesRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -172,150 +159,134 @@ function StrikeChart({
   const upColor = '#00B386'
   const downColor = '#EB5B3C'
 
-  // Create chart
+  // Create chart — uses dynamic import to avoid SSR issues
   useEffect(() => {
     if (!containerRef.current) return
 
-    const chart = createChart(containerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: '#FFFFFF' },
-        textColor: '#9ca3af',
-        fontSize: 11,
-        fontFamily: 'Inter, system-ui, sans-serif',
-      },
-      grid: {
-        vertLines: { color: 'rgba(0,0,0,0.04)' },
-        horzLines: { color: 'rgba(0,0,0,0.04)' },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: { color: '#d1d5db', style: 2, width: 1, labelBackgroundColor: '#374151' },
-        horzLine: { color: '#d1d5db', style: 2, width: 1, labelBackgroundColor: '#374151' },
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(0,0,0,0.08)',
-        scaleMargins: { top: 0.05, bottom: 0.25 },
-      },
-      timeScale: {
-        borderColor: 'rgba(0,0,0,0.08)',
-        timeVisible: range !== '1M',
-        secondsVisible: false,
-        rightOffset: 5,
-        barSpacing: range === '1D' ? 3 : range === '1W' ? 6 : 10,
-      },
-      handleScroll: true,
-      handleScale: true,
-    })
+    let destroyed = false
 
-    chartRef.current = chart
+    import('lightweight-charts').then(({ createChart, ColorType, CrosshairMode, CandlestickSeries, LineSeries, HistogramSeries }) => {
+      if (destroyed || !containerRef.current) return
 
-    // Volume series
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-    })
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.85, bottom: 0 },
-    })
-    volumeSeriesRef.current = volumeSeries
+      const chart = createChart(containerRef.current, {
+        layout: {
+          background: { type: ColorType.Solid, color: '#FFFFFF' },
+          textColor: '#9ca3af',
+          fontSize: 11,
+          fontFamily: 'Inter, system-ui, sans-serif',
+        },
+        grid: {
+          vertLines: { color: 'rgba(0,0,0,0.04)' },
+          horzLines: { color: 'rgba(0,0,0,0.04)' },
+        },
+        crosshair: {
+          mode: CrosshairMode.Normal,
+          vertLine: { color: '#d1d5db', style: 2, width: 1, labelBackgroundColor: '#374151' },
+          horzLine: { color: '#d1d5db', style: 2, width: 1, labelBackgroundColor: '#374151' },
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(0,0,0,0.08)',
+          scaleMargins: { top: 0.05, bottom: 0.25 },
+        },
+        timeScale: {
+          borderColor: 'rgba(0,0,0,0.08)',
+          timeVisible: range !== '1M',
+          secondsVisible: false,
+          rightOffset: 5,
+          barSpacing: range === '1D' ? 3 : range === '1W' ? 6 : 10,
+        },
+        handleScroll: true,
+        handleScale: true,
+      })
 
-    // Responsive resize
-    const resizeObserver = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect
-        chart.applyOptions({ width, height })
+      chartRef.current = chart
+
+      // Volume series
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'volume',
+      })
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0.85, bottom: 0 },
+      })
+      volumeSeriesRef.current = volumeSeries
+
+      // Main series
+      if (chartType === 'candle') {
+        mainSeriesRef.current = chart.addSeries(CandlestickSeries, {
+          upColor,
+          downColor,
+          borderUpColor: upColor,
+          borderDownColor: downColor,
+          wickUpColor: upColor,
+          wickDownColor: downColor,
+        })
+      } else {
+        mainSeriesRef.current = chart.addSeries(LineSeries, {
+          color: isPositive ? upColor : downColor,
+          lineWidth: 2,
+          crosshairMarkerRadius: 5,
+          crosshairMarkerBorderColor: '#fff',
+          crosshairMarkerBorderWidth: 2,
+        })
       }
+
+      // Set data
+      if (data.length > 0) {
+        const times = data.map(d => parseTime(d.date, range))
+
+        if (chartType === 'candle') {
+          mainSeriesRef.current.setData(data.map((d, i) => ({
+            time: times[i],
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+          })))
+        } else {
+          mainSeriesRef.current.setData(data.map((d, i) => ({
+            time: times[i],
+            value: d.close,
+          })))
+        }
+
+        volumeSeries.setData(data.map((d, i) => ({
+          time: times[i],
+          value: d.volume,
+          color: d.close >= d.open ? 'rgba(0,179,134,0.25)' : 'rgba(235,91,60,0.25)',
+        })))
+
+        chart.timeScale().fitContent()
+      }
+
+      // Responsive resize
+      const resizeObserver = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const { width, height } = entry.contentRect
+          chart.applyOptions({ width, height })
+        }
+      })
+      resizeObserver.observe(containerRef.current)
+
+      // Store cleanup
+      chartRef.current._cleanup = () => {
+        resizeObserver.disconnect()
+        chart.remove()
+      }
+    }).catch(() => {
+      // Chart library failed to load — silently ignore
     })
-    resizeObserver.observe(containerRef.current)
 
     return () => {
-      resizeObserver.disconnect()
-      chart.remove()
+      destroyed = true
+      if (chartRef.current?._cleanup) {
+        chartRef.current._cleanup()
+      }
       chartRef.current = null
       mainSeriesRef.current = null
       volumeSeriesRef.current = null
     }
-  }, [range])
-
-  // Create/switch main series when chartType changes
-  useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) return
-
-    // Remove existing main series if any
-    if (mainSeriesRef.current) {
-      chart.removeSeries(mainSeriesRef.current)
-      mainSeriesRef.current = null
-    }
-
-    if (chartType === 'candle') {
-      const series = chart.addSeries(CandlestickSeries, {
-        upColor,
-        downColor,
-        borderUpColor: upColor,
-        borderDownColor: downColor,
-        wickUpColor: upColor,
-        wickDownColor: downColor,
-      })
-      mainSeriesRef.current = series
-    } else {
-      const series = chart.addSeries(LineSeries, {
-        color: isPositive ? upColor : downColor,
-        lineWidth: 2,
-        crosshairMarkerRadius: 5,
-        crosshairMarkerBorderColor: '#fff',
-        crosshairMarkerBorderWidth: 2,
-      })
-      mainSeriesRef.current = series
-    }
-  }, [chartType, isPositive, upColor, downColor])
-
-  // Set data when chart data changes
-  useEffect(() => {
-    if (!chartRef.current || !mainSeriesRef.current || !volumeSeriesRef.current) return
-    if (data.length === 0) return
-
-    const times = data.map(d => parseTime(d.date, range))
-
-    if (chartType === 'candle') {
-      const candleSeries = mainSeriesRef.current
-      const candleData: CandlestickData[] = data.map((d, i) => ({
-        time: times[i],
-        open: d.open,
-        high: d.high,
-        low: d.low,
-        close: d.close,
-      }))
-      candleSeries.setData(candleData)
-    } else {
-      const lineSeries = mainSeriesRef.current
-      const lineData = data.map((d, i) => ({
-        time: times[i],
-        value: d.close,
-      }))
-      lineSeries.setData(lineData)
-    }
-
-    // Volume data
-    const volumeData: HistogramData[] = data.map((d, i) => ({
-      time: times[i],
-      value: d.volume,
-      color: d.close >= d.open ? 'rgba(0,179,134,0.25)' : 'rgba(235,91,60,0.25)',
-    }))
-    volumeSeriesRef.current.setData(volumeData)
-
-    // Fit content
-    chartRef.current.timeScale().fitContent()
-  }, [data, chartType, range])
-
-  // Update line color when isPositive changes
-  useEffect(() => {
-    if (chartType !== 'line' || !mainSeriesRef.current) return
-    const lineSeries = mainSeriesRef.current
-    lineSeries.applyOptions({
-      color: isPositive ? upColor : downColor,
-    })
-  }, [isPositive, chartType, upColor, downColor])
+  }, [range, chartType, isPositive, data, upColor, downColor])
 
   if (data.length === 0) return null
 
