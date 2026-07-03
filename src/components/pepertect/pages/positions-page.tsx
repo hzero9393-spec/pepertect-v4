@@ -1130,7 +1130,6 @@ export function PositionsPage() {
     }
 
     return () => {
-      if (rafId) cancelAnimationFrame(rafId)
       for (const es of ocSourcesRef.current.values()) es.close()
       ocSourcesRef.current.clear()
     }
