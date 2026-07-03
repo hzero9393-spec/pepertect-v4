@@ -40,6 +40,7 @@ import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { TrendingUp } from 'lucide-react'
 import { GlobalSLMonitor } from '@/components/pepertect/global-sl-monitor'
 import { MobileSwipeNavigator } from '@/components/pepertect/mobile-swipe-navigator'
+import { usePepertectWS } from '@/hooks/use-pepertect-ws'
 
 // Footer page IDs — these pages show their own footer-free layout
 const FOOTER_PAGES = new Set([
@@ -151,6 +152,9 @@ function LoadingScreen() {
 export function AppShell() {
   const { currentPage, sidebarOpen, setSidebarOpen, watchlistSidebarOpen, initFromUrl } = useAppStore()
   const { isAuthenticated, isInitializing, initialize, logout, user, token, setAuth } = useAuthStore()
+
+  // WebSocket connection — connects when user logs in, disconnects on logout
+  usePepertectWS()
 
   // Handle OAuth callback token from URL
   const handleOAuthCallback = useCallback(async () => {

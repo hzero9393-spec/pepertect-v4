@@ -186,7 +186,7 @@ export function OptionChainPage() {
     return () => { cancelled = true }
   }, [index])
 
-  // SSE stream — persistent with auto-reconnect
+  // WebSocket option chain stream
   useEffect(() => {
     if (!expiry) return
 
@@ -195,7 +195,9 @@ export function OptionChainPage() {
     wsClient.subscribe('options', { underlying: index, expiry })
 
     const unsub = wsClient.on('options:update', (msg) => {
-      if (!cancelled && msg) setData(msg)
+      if (!cancelled && msg && msg.underlying?.toUpperCase() === index.toUpperCase() && msg.expiry === expiry) {
+        setData(msg)
+      }
     })
     setLive(true)
 

@@ -147,7 +147,9 @@ class MarketDataManager {
     const token = useAuthStore.getState().token
     if (token) wsClient.connect(token)
 
-    this._status = 'connecting'
+    // Determine initial status based on current WS state
+    const alreadyConnected = wsClient.isConnected()
+    this._status = alreadyConnected ? 'connected' : 'connecting'
     this.notifyStatusHandlers()
 
     // Listen for WS status changes
@@ -179,6 +181,12 @@ class MarketDataManager {
       this.handleDataUpdate(data)
     })
     this.wsCleanupFns.push(unsubUpdate)
+
+    // If WS is already connected (e.g. by usePepertectWS in app-shell), subscribe immediately
+    if (alreadyConnected) {
+      this.stopRestPolling()
+      wsClient.subscribe('market')
+    }
 
     // Also start market status check
     this.checkMarketStatus()
