@@ -30,8 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files (root only — server/.env is committed for Render deployment)
+/.env
+!.env.deploy
+!server/.env
 
 # vercel
 .vercel
@@ -86,4 +88,4 @@ PEPERTECT_CREDENTIALS.md
 package-lock.json
 server/node_modules/
 server/dist/
-server/.env
+# server/.env — needed for Render deployment
