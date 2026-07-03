@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     // ─── Batch: Collect all unique symbols for price lookup ─────
     const equitySymbols = new Set<string>()
     const futureSymbols = new Set<string>()
-    const optionKeys: { underlying: string; optionType: string; strikePrice: number }[] = []
+    const optionKeys: { underlying: string; optionType: string; strikePrice: number; expiryDate?: Date | null }[] = []
 
     for (const pos of positions) {
       if (pos.segment === 'EQUITY') {
@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
           underlying: pos.symbol.toUpperCase(),
           optionType: pos.optionType,
           strikePrice: pos.strikePrice,
+          expiryDate: pos.expiryDate,
         })
       }
     }
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest) {
             select: { underlying: true, ltp: true, change: true, changePercent: true },
           })
         : Promise.resolve([]),
-      // All option prices in ONE query (with composite where)
+      // All option prices in ONE query (filter by expiryDate for precise match)
       optionKeys.length > 0
         ? db.option.findMany({
             where: {
@@ -73,11 +74,12 @@ export async function GET(request: NextRequest) {
                 underlying: ok.underlying,
                 optionType: ok.optionType,
                 strikePrice: ok.strikePrice,
+                ...(ok.expiryDate ? { expiryDate: ok.expiryDate } : {}),
                 isActive: true,
               })),
             },
             orderBy: { expiryDate: 'asc' },
-            select: { underlying: true, optionType: true, strikePrice: true, ltp: true, change: true, changePercent: true },
+            select: { underlying: true, optionType: true, strikePrice: true, expiryDate: true, ltp: true, change: true, changePercent: true },
           })
         : Promise.resolve([]),
     ])
@@ -89,7 +91,7 @@ export async function GET(request: NextRequest) {
     const futurePriceMap = new Map(
       futurePrices.map(f => [f.underlying.toUpperCase(), f])
     )
-    // For options, key = "UNDERLYING:TYPE:STRIKE"
+    // For options, key = "UNDERLYING:TYPE:STRIKE" (expiry-aware dedup handled by query)
     const optionPriceMap = new Map(
       optionPrices.map(o => [`${o.underlying.toUpperCase()}:${o.optionType}:${o.strikePrice}`, o])
     )

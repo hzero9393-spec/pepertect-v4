@@ -27,6 +27,7 @@ import { db } from '@/lib/db'
 import { cache, CacheKeys, CacheTTL } from '@/lib/cache'
 import { calculateBrokerage } from '@/lib/trade-auth'
 import { Prisma } from '@prisma/client'
+import { getOptionChainManager } from '@/lib/option-chain-manager'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -316,11 +317,56 @@ class AutoExitWorker {
       const cached = cache.get<{ ltp: number }>(optKey)
       if (cached?.ltp && cached.ltp > 0) return cached.ltp
 
+      // Try option chain manager first (real-time)
+      try {
+        const ocManager = getOptionChainManager()
+        const expiryMap = (ocManager as any).latestData as Map<string, any> | undefined
+        if (expiryMap && expiryMap.size > 0) {
+          const expiryStr = position.expiryDate ? new Date(position.expiryDate).toISOString().split('T')[0] : null
+          const upperSymbol = position.symbol.toUpperCase()
+
+          // Prefer exact expiry match
+          if (expiryStr) {
+            for (const [, data] of expiryMap) {
+              if (data.underlying === upperSymbol && data.expiry === expiryStr && data.strikes) {
+                const strike = data.strikes.find((s: any) => s.strike_price === position.strikePrice)
+                if (strike) {
+                  const optData = position.optionType === 'CE'
+                    ? strike.call_options?.market_data
+                    : strike.put_options?.market_data
+                  if (optData?.ltp && optData.ltp > 0) {
+                    cache.set(optKey, { ltp: optData.ltp }, CacheTTL.OPTION_PRICE)
+                    return optData.ltp
+                  }
+                }
+              }
+            }
+          }
+          // Fallback: any expiry for this underlying
+          for (const [, data] of expiryMap) {
+            if (data.underlying === upperSymbol && data.strikes) {
+              const strike = data.strikes.find((s: any) => s.strike_price === position.strikePrice)
+              if (strike) {
+                const optData = position.optionType === 'CE'
+                  ? strike.call_options?.market_data
+                  : strike.put_options?.market_data
+                if (optData?.ltp && optData.ltp > 0) {
+                  cache.set(optKey, { ltp: optData.ltp }, CacheTTL.OPTION_PRICE)
+                  return optData.ltp
+                }
+              }
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
+      // Fallback to DB with expiryDate filter
       const option = await db.option.findFirst({
         where: {
           underlying: position.symbol,
           optionType: position.optionType,
           strikePrice: position.strikePrice,
+          ...(position.expiryDate ? { expiryDate: position.expiryDate } : {}),
           isActive: true,
         },
         orderBy: { expiryDate: 'asc' },

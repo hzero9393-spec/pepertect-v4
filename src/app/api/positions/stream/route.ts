@@ -23,6 +23,7 @@ interface PositionUpdate {
   segment: string
   optionType: string | null
   strikePrice: number | null
+  expiryDate: string | null
   currentPrice: number
   unrealizedPnl: number
   unrealizedPnlPercent: number
@@ -36,7 +37,16 @@ interface PositionUpdate {
   }
 }
 
-async function getLivePrice(segment: string, symbol: string, optionType: string | null, strikePrice: number | null): Promise<number> {
+// Track which underlyings we've ensured OC polling for (per SSE connection)
+const ensuredOcPolling = new Set<string>()
+
+async function getLivePrice(
+  segment: string,
+  symbol: string,
+  optionType: string | null,
+  strikePrice: number | null,
+  expiryDate: Date | null,
+): Promise<number> {
   if (segment === 'EQUITY') {
     const manager = getMarketDataManager()
     const stock = manager.stocks[symbol.toUpperCase()]
@@ -46,20 +56,69 @@ async function getLivePrice(segment: string, symbol: string, optionType: string 
     if (cached?.currentPrice && cached.currentPrice > 0) return cached.currentPrice
   } else if (segment === 'OPTIONS' && optionType && strikePrice) {
     const ocManager = getOptionChainManager()
-    // Try to get from any active subscription
+
+    // ─── Ensure OC is polling for this underlying ──────────────────
+    // The OC manager only polls when there are subscribers (from option-chain page).
+    // When a user has open option positions but isn't on the OC page, we must
+    // trigger polling here so that latestData stays fresh.
+    const upperSymbol = symbol.toUpperCase()
+    const ocKey = `${upperSymbol}::`
+    if (!ensuredOcPolling.has(upperSymbol)) {
+      ensuredOcPolling.add(upperSymbol)
+      // Get the nearest expiry for this underlying
+      try {
+        const nearestExpiry = await ocManager.getExpiries(upperSymbol)
+        if (nearestExpiry.length > 0) {
+          // Subscribe with a no-op handler just to trigger polling
+          const unsub = ocManager.subscribe(upperSymbol, nearestExpiry[0], () => {})
+          // Store unsubscribe for later cleanup — we keep it alive for the
+          // duration of the SSE connection since positions may exist.
+          ;(ocManager as any)._positionPollUnsubs = (ocManager as any)._positionPollUnsubs || []
+          ;(ocManager as any)._positionPollUnsubs.push(unsub)
+        }
+      } catch { /* ignore */ }
+    }
+
+    // ─── Look up from OC manager's latestData ──────────────────────
     const expiryMap = (ocManager as any).latestData as Map<string, any> | undefined
     if (expiryMap && expiryMap.size > 0) {
-      for (const [, data] of expiryMap) {
-        if (data.underlying === symbol.toUpperCase() && data.strikes) {
+      // Prefer exact expiry match if we have expiryDate
+      const expiryStr = expiryDate ? new Date(expiryDate).toISOString().split('T')[0] : null
+
+      // First try: exact expiry match
+      if (expiryStr) {
+        for (const [key, data] of expiryMap) {
+          if (
+            data.underlying === upperSymbol &&
+            data.expiry === expiryStr &&
+            data.strikes
+          ) {
+            const strike = data.strikes.find((s: any) => s.strike_price === strikePrice)
+            if (strike) {
+              const optData = optionType === 'CE'
+                ? strike.call_options?.market_data
+                : strike.put_options?.market_data
+              if (optData?.ltp && optData.ltp > 0) return optData.ltp
+            }
+          }
+        }
+      }
+
+      // Fallback: any expiry for this underlying (first match)
+      for (const [key, data] of expiryMap) {
+        if (data.underlying === upperSymbol && data.strikes) {
           const strike = data.strikes.find((s: any) => s.strike_price === strikePrice)
           if (strike) {
-            const optData = optionType === 'CE' ? strike.call_options?.market_data : strike.put_options?.market_data
+            const optData = optionType === 'CE'
+              ? strike.call_options?.market_data
+              : strike.put_options?.market_data
             if (optData?.ltp && optData.ltp > 0) return optData.ltp
           }
         }
       }
     }
 
+    // ─── Fallback to cache ─────────────────────────────────────────
     const optKey = CacheKeys.optionPrice(symbol, optionType, strikePrice)
     const cached = cache.get<{ ltp: number }>(optKey)
     if (cached?.ltp && cached.ltp > 0) return cached.ltp
@@ -114,6 +173,7 @@ export async function GET(request: Request) {
           segment: true,
           optionType: true,
           strikePrice: true,
+          expiryDate: true,
           tradeDirection: true,
           entryPrice: true,
           quantity: true,
@@ -125,7 +185,7 @@ export async function GET(request: Request) {
       const updates: PositionUpdate[] = []
 
       for (const pos of positions) {
-        const livePrice = await getLivePrice(pos.segment, pos.symbol, pos.optionType, pos.strikePrice)
+        const livePrice = await getLivePrice(pos.segment, pos.symbol, pos.optionType, pos.strikePrice, pos.expiryDate)
         const price = livePrice > 0 ? livePrice : pos.currentPrice
 
         let unrealizedPnl: number
@@ -146,6 +206,7 @@ export async function GET(request: Request) {
           segment: pos.segment,
           optionType: pos.optionType,
           strikePrice: pos.strikePrice,
+          expiryDate: pos.expiryDate ? pos.expiryDate.toISOString() : null,
           currentPrice: price,
           unrealizedPnl,
           unrealizedPnlPercent,

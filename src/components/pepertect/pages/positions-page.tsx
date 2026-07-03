@@ -817,6 +817,8 @@ export function PositionsPage() {
   const [prevPnlMap, setPrevPnlMap] = useState<Record<string, number>>({})
 
   // Update live prices from market data (only when price actually changes AND market is open)
+  // Uses pos.id as key for ALL segments (equity, futures, options)
+  // This prevents different strikes of the same underlying from overwriting each other
   useEffect(() => {
     // Don't update live prices if market is closed
     if (!marketOpen) return
@@ -827,14 +829,16 @@ export function PositionsPage() {
     let hasChanges = false
 
     for (const pos of positions) {
+      if (!pos.isOpen && pos.isOpen !== undefined) continue
+
       if (pos.segment === 'EQUITY') {
         const quote = wsStockQuotes[pos.symbol]
         if (quote && quote.last_price > 0) {
           const newPrice = quote.last_price
-          const currentLive = livePricesRef.current[pos.symbol]
+          const currentLive = livePricesRef.current[pos.id]
           if (currentLive !== newPrice) {
             if (currentLive !== undefined) {
-              prevPricesRef.current[pos.symbol] = currentLive
+              prevPricesRef.current[pos.id] = currentLive
             }
             if (currentLive !== undefined && currentLive > 0) {
               const prevPnl = pos.tradeDirection === 'BUY'
@@ -842,11 +846,14 @@ export function PositionsPage() {
                 : (pos.entryPrice - currentLive) * pos.quantity
               pnlUpdates[pos.id] = Math.round(prevPnl * 100) / 100
             }
-            priceUpdates[pos.symbol] = newPrice
+            priceUpdates[pos.id] = newPrice
             hasChanges = true
           }
         }
       }
+      // For OPTIONS and FUTURES, prices come from the SSE positions stream,
+      // not from wsStockQuotes (which only has equity/index spot prices).
+      // So we don't update them here — the SSE handler below does it.
     }
 
     if (hasChanges) {
@@ -870,10 +877,16 @@ export function PositionsPage() {
         const json = await res.json()
         const newPos = json.data || []
         setPositions(newPos)
+        // Initialize live prices keyed by pos.id (NOT pos.symbol)
+        // This ensures different strikes of same underlying get separate prices
         const initialPrices: Record<string, number> = {}
         for (const pos of newPos) {
-          if (pos.segment !== 'EQUITY' || wsStatus !== 'connected') {
-            initialPrices[pos.symbol] = pos.currentPrice
+          if (pos.isOpen !== false) {
+            // For equity, prefer SSE/wsStockQuotes (handled in separate useEffect)
+            // For options/futures, use the server-provided currentPrice as initial value
+            if (pos.segment !== 'EQUITY') {
+              initialPrices[pos.id] = pos.currentPrice
+            }
           }
         }
         if (Object.keys(initialPrices).length > 0) {
@@ -908,14 +921,26 @@ export function PositionsPage() {
         const msg = JSON.parse(event.data)
 
         if (msg.type === 'positions' && msg.data) {
-          // Update live prices from server
+          // Update live prices from server (keyed by positionId)
           const updates: Record<string, number> = {}
           const pnlUpdates: Record<string, number> = {}
           const pnlPercentUpdates: Record<string, number> = {}
           const exitEvents: Record<string, { reason: string; exitPrice: number; pnl: number; timestamp: number }> = {}
 
           for (const update of msg.data) {
-            // Store live price
+            // Track previous price for flash animation
+            const prevLive = livePricesRef.current[update.positionId]
+            if (prevLive !== undefined && prevLive !== update.currentPrice) {
+              prevPricesRef.current[update.positionId] = prevLive
+              // Track previous P&L for flash animation
+              if (prevLive > 0) {
+                const direction = update.tradeDirection
+                const qty = 0 // We don't have qty here, but P&L updates are sent from server
+                // Server sends correct unrealizedPnl, so just track previous
+              }
+            }
+
+            // Store live price keyed by positionId
             updates[update.positionId] = update.currentPrice
             pnlUpdates[update.positionId] = update.unrealizedPnl
             pnlPercentUpdates[update.positionId] = update.unrealizedPnlPercent
@@ -927,6 +952,8 @@ export function PositionsPage() {
           }
 
           if (Object.keys(updates).length > 0) {
+            // Update ref and state
+            livePricesRef.current = { ...livePricesRef.current, ...updates }
             setLivePrices(prev => ({ ...prev, ...updates }))
             setPrevPnlMap(prev => ({ ...prev, ...pnlUpdates }))
             // Update positions with new prices
@@ -1074,7 +1101,7 @@ export function PositionsPage() {
   // ─── Total P&L (real-time) ────────────────────────────────
   const totalPnl = useMemo(() => {
     return allOpenPositions.reduce((s, pos) => {
-      const livePrice = livePrices[pos.symbol] ?? pos.currentPrice
+      const livePrice = livePrices[pos.id] ?? pos.currentPrice
       let pnl: number
       if (pos.tradeDirection === 'BUY') {
         pnl = (livePrice - pos.entryPrice) * pos.quantity
@@ -1088,7 +1115,7 @@ export function PositionsPage() {
   const isLive = wsStatus === 'connected' && marketOpen
 
   // Get live price for detail position
-  const detailLivePrice = detailPosition ? (livePrices[detailPosition.symbol] ?? detailPosition.currentPrice) : undefined
+  const detailLivePrice = detailPosition ? (livePrices[detailPosition.id] ?? detailPosition.currentPrice) : undefined
 
   return (
     <div className="min-h-screen bg-[#f5f7fa] flex flex-col">
@@ -1241,9 +1268,13 @@ export function PositionsPage() {
           ) : (
             <div className="space-y-3">
               {currentOpenPositions.map((pos) => {
-                const livePrice = livePrices[pos.symbol] ?? pos.currentPrice
-                const prevPrice = prevPricesRef.current[pos.symbol]
-                const isPositionLive = pos.segment === 'EQUITY' && wsStatus === 'connected' && !!wsStockQuotes[pos.symbol] && marketOpen
+                const livePrice = livePrices[pos.id] ?? pos.currentPrice
+                const prevPrice = prevPricesRef.current[pos.id]
+                // Position is "live" when it has a real-time price update (SSE or WS)
+                const isPositionLive = pos.isOpen && (
+                  (pos.segment === 'EQUITY' && wsStatus === 'connected' && !!wsStockQuotes[pos.symbol] && marketOpen) ||
+                  (pos.segment !== 'EQUITY' && !!livePrices[pos.id] && livePrices[pos.id] !== pos.currentPrice)
+                )
 
                 return (
                   <OpenPositionCard
