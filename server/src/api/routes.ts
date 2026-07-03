@@ -220,22 +220,22 @@ router.get('/debug/option-chain', async (req: Request, res: Response) => {
   try {
     const url = `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(instrumentKey)}&expiry_date=${encodeURIComponent(expiry)}`
     const fetchStart = Date.now()
-    const res = await fetch(url, {
+    const apiRes = await fetch(url, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(10000),
     })
     const fetchTime = Date.now() - fetchStart
 
-    result.apiStatus = res.status
-    result.apiStatusText = res.statusText
+    result.apiStatus = apiRes.status
+    result.apiStatusText = apiRes.statusText
     result.fetchTimeMs = fetchTime
 
-    const text = await res.text()
+    const text = await apiRes.text()
     result.responseLength = text.length
     result.responsePreview = text.substring(0, 500)
 
-    if (!res.ok) {
-      result.error = `Upstox API returned ${res.status}`
+    if (!apiRes.ok) {
+      result.error = `Upstox API returned ${apiRes.status}`
       return res.status(200).json({ success: false, data: result })
     }
 
