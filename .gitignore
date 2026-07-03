@@ -84,3 +84,6 @@ prisma/dev.db
 .vercel-token
 PEPERTECT_CREDENTIALS.md
 package-lock.json
+server/node_modules/
+server/dist/
+server/.env

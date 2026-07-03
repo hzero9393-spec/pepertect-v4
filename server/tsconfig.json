@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "paths": {
+      "@lib/*": ["./src/lib/*"],
+      "@services/*": ["./src/services/*"],
+      "@ws/*": ["./src/ws/*"],
+      "@http/*": ["./src/http/*"]
+    },
+    "baseUrl": "."
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
