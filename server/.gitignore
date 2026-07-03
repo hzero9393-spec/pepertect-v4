@@ -1,1 +1,4 @@
-node_modules/\ndist/\n.env\n.next/\n*.tsbuildinfo
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
