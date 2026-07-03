@@ -1,0 +1,907 @@
+// Pepertect - Indian Stock Market Paper Trading Platform
+// Prisma Schema for PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// USER & AUTHENTICATION
+// ============================================================
+
+model User {
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  phone           String?   @unique
+  panNumber       String?   @unique
+  passwordHash    String?   // Optional for OAuth users (Google sign-in)
+  oauthProvider   String?   // 'google', 'github', etc.
+  oauthId         String?   // Provider-specific user ID
+  avatar          String?
+  role            String    @default("USER") // UserRole: USER, ADMIN, SUPER_ADMIN
+  subscription    String    @default("FREE") // SubscriptionTier: FREE, PREMIUM
+
+  // Virtual Trading Account
+  virtualBalance  Float     @default(100000) // ₹1,00,000 default
+  marginUsed      Float     @default(0)
+
+  // Stats
+  totalTrades     Int       @default(0)
+  winRate         Float     @default(0)
+  totalPnl        Float     @default(0)
+  rank            Int?
+
+  // Subscription Details
+  subscriptionId  String?
+  subscriptionEnd DateTime?
+  dailyTrades     Int       @default(0)
+  dailyPositions  Int       @default(0)
+  lastResetDate   DateTime?
+
+  // Security
+  twoFactorSecret   String?
+  twoFactorEnabled  Boolean  @default(false)
+  notificationsEnabled Boolean @default(false)
+  pushSubscriptionId String?
+
+  // Metadata
+  isEmailVerified Boolean   @default(false)
+  isPhoneVerified Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  trades          Trade[]
+  orders          Order[]
+  positions       Position[]
+  portfolios      Portfolio[]
+  sessions        Session[]
+  watchlistItems  WatchlistItem[]
+  watchlists      Watchlist[]
+  notifications   Notification[]
+  notificationLogs NotificationLog[]
+  priceAlerts     PriceAlert[]
+  pushSubscriptions PushSubscription[]
+  savedAnalyses   SavedAnalysis[]
+  subscriptionTransactions SubscriptionTransaction[]
+  supportTickets  SupportTicket[]
+
+  @@index([email])
+  @@unique([oauthProvider, oauthId])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  device       String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  // Extended Device Info
+  browser      String?
+  os           String?
+  deviceType   String?
+  location     String?
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ============================================================
+// MARKET DATA - INDICES
+// ============================================================
+
+model Index {
+  id              String   @id @default(cuid())
+  symbol          String   @unique // NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY
+  name            String   // "NIFTY 50", "BANK NIFTY"
+  lotSize         Int      // 50, 25, 40, 15, 75
+  expiryDay       String   // "Thursday", "Wednesday", "Tuesday"
+  tickSize        Float    @default(0.05)
+  strikeInterval  Int      // 50, 100
+
+  // Price Data
+  currentPrice    Float
+  open            Float?
+  high            Float?
+  low             Float?
+  previousClose   Float?
+  change          Float    @default(0)
+  changePercent   Float    @default(0)
+  volume          Float?
+  
+  // Status
+  isEnabled       Boolean  @default(true)
+  lastUpdated     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  indexHistory    IndexHistory[]
+
+  @@index([symbol])
+  @@map("indices")
+}
+
+model IndexHistory {
+  id              String   @id @default(cuid())
+  indexSymbol     String
+  date            DateTime
+  open            Float
+  high            Float
+  low             Float
+  close           Float
+  volume          Float?
+  createdAt       DateTime @default(now())
+
+  index           Index    @relation(fields: [indexSymbol], references: [symbol], onDelete: Cascade)
+
+  @@unique([indexSymbol, date])
+  @@map("index_history")
+}
+
+// ============================================================
+// MARKET DATA - STOCKS (NSE)
+// ============================================================
+
+model Stock {
+  id                  String   @id @default(cuid())
+  symbol              String   @unique // RELIANCE, TCS, HDFCBANK etc
+  name                String   // "Reliance Industries Ltd"
+  isin                String?  // INE002A01018
+  sector              String   // "Energy", "IT", "Banking"
+  industry            String?
+  exchange            String   @default("NSE") // NSE, BSE
+  
+  // Fundamentals
+  faceValue           Float?
+  marketCap           Float?
+  peRatio             Float?
+  dividendYield       Float?
+
+  // F&O Details
+  lotSize             Int      @default(1)
+  isFuturesAvailable  Boolean  @default(false)
+  isOptionsAvailable  Boolean  @default(false)
+  strikeInterval      Int?     // Based on price range
+  circuitLimit        Float    @default(20) // 10%, 20%
+
+  // Price Data
+  currentPrice        Float
+  open                Float?
+  high                Float?
+  low                 Float?
+  previousClose       Float?
+  change              Float    @default(0)
+  changePercent       Float    @default(0)
+  volume              Float?
+  
+  // 52 Week
+  week52High          Float?
+  week52Low           Float?
+
+  // Status
+  isFnoBan            Boolean  @default(false)
+  banStartDate        DateTime?
+  banEndDate          DateTime?
+  isActive            Boolean  @default(true)
+  lastUpdated         DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  stockHistory        StockHistory[]
+
+  @@index([symbol])
+  @@index([sector])
+  @@map("stocks")
+}
+
+model StockHistory {
+  id              String   @id @default(cuid())
+  stockSymbol     String
+  date            DateTime
+  open            Float
+  high            Float
+  low             Float
+  close           Float
+  volume          Float?
+  createdAt       DateTime @default(now())
+
+  stock           Stock    @relation(fields: [stockSymbol], references: [symbol], onDelete: Cascade)
+
+  @@unique([stockSymbol, date])
+  @@map("stock_history")
+}
+
+// ============================================================
+// DERIVATIVES - FUTURES
+// ============================================================
+
+model Future {
+  id              String   @id @default(cuid())
+  underlying      String   // NIFTY, BANKNIFTY, RELIANCE etc
+  underlyingType  String   @default("INDEX") // UnderlyingType: INDEX, STOCK
+  expiryDate      DateTime
+  expiryType      String   @default("MONTHLY") // ExpiryType: WEEKLY, MONTHLY
+  lotSize         Int
+
+  // Price Data
+  ltp             Float
+  open            Float?
+  high            Float?
+  low             Float?
+  previousClose   Float?
+  change          Float    @default(0)
+  changePercent   Float    @default(0)
+  
+  // Futures Specific
+  openInterest    Float    @default(0)
+  oiChange        Float    @default(0)
+  volume          Float    @default(0)
+  basis           Float    @default(0) // Future Price - Spot Price
+  
+  // Margin
+  marginPercent   Float    @default(10) // SPAN + Exposure margin %
+  
+  isActive        Boolean  @default(true)
+  lastUpdated     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([underlying, expiryDate])
+  @@map("futures")
+}
+
+// ============================================================
+// DERIVATIVES - OPTIONS (Indian Market Style)
+// ============================================================
+
+model Option {
+  id              String   @id @default(cuid())
+  underlying      String   // NIFTY, BANKNIFTY, RELIANCE etc
+  underlyingType  String   @default("INDEX") // UnderlyingType: INDEX, STOCK
+  underlyingPrice Float    // Spot price at time of record
+  expiryDate      DateTime
+  expiryType      String   @default("WEEKLY") // ExpiryType: WEEKLY, MONTHLY
+  strikePrice     Float
+  optionType      String   // OptionType: CE, PE
+  
+  // Price Data
+  ltp             Float
+  previousClose   Float?
+  change          Float    @default(0)
+  changePercent   Float    @default(0)
+  
+  // Option Chain Data (Indian Market Standard)
+  openInterest    Float    @default(0) // In Lakhs
+  oiChange        Float    @default(0)
+  oiChangePercent Float    @default(0)
+  volume          Float    @default(0)
+  impliedVolatility Float  @default(0)
+  
+  // Greeks
+  delta           Float?
+  gamma           Float?
+  theta           Float?
+  vega            Float?
+  
+  // Classification
+  inTheMoney      Boolean  @default(false)
+  
+  isActive        Boolean  @default(true)
+  lastUpdated     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([underlying, expiryDate, strikePrice, optionType])
+  @@map("options")
+}
+
+// ============================================================
+// TRADING - ORDERS
+// ============================================================
+
+model Order {
+  id              String      @id @default(cuid())
+  userId          String
+  orderType       String      // OrderType: MARKET, LIMIT, SL, SL_M
+  tradeDirection  String      // TradeDirection: BUY, SELL
+  segment         String      // Segment: EQUITY, FUTURES, OPTIONS
+  productType     String      // ProductType: INTRADAY, DELIVERY, CARRY_FORWARD
+  
+  // Instrument Details
+  symbol          String      // NIFTY, RELIANCE etc
+  instrumentId    String?     // Future/Option ID if applicable
+  optionType      String?     // OptionType: CE, PE (for options)
+  strikePrice     Float?      // For options
+  expiryDate      DateTime?   // For derivatives
+  lotSize         Int         @default(1)
+  lots            Int         @default(1)
+  
+  // Price & Quantity
+  quantity        Int
+  price           Float       // Order price
+  triggerPrice    Float?      // For SL orders
+  fillPrice       Float?      // Actual execution price
+  
+  // Calculated
+  totalValue      Float       @default(0)
+  brokerage       Float       @default(0)
+  marginRequired  Float       @default(0)
+  
+  // Stop Loss / Target
+  stopLoss        Float?
+  target          Float?
+  
+  // Status
+  status          String      @default("PENDING") // OrderStatus: PENDING, PARTIALLY_FILLED, FILLED, CANCELLED, REJECTED, EXPIRED
+  rejectReason    String?
+  
+  // Timestamps
+  placedAt        DateTime    @default(now())
+  filledAt        DateTime?
+  cancelledAt     DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trade           Trade?
+
+  @@index([userId, status])
+  @@index([userId, placedAt])
+  @@map("orders")
+}
+
+// ============================================================
+// TRADING - TRADES (Executed)
+// ============================================================
+
+model Trade {
+  id              String      @id @default(cuid())
+  userId          String
+  orderId         String?     @unique
+  segment         String      // Segment: EQUITY, FUTURES, OPTIONS
+  productType     String      // ProductType: INTRADAY, DELIVERY, CARRY_FORWARD
+  tradeDirection  String      // TradeDirection: BUY, SELL
+  
+  // Instrument
+  symbol          String
+  instrumentId    String?
+  optionType      String?     // OptionType: CE, PE
+  strikePrice     Float?
+  expiryDate      DateTime?
+  
+  // Execution
+  quantity        Int
+  fillPrice       Float
+  totalValue      Float
+  brokerage       Float       @default(0)
+  
+  // P&L
+  pnl             Float?
+  pnlPercent      Float?
+  
+  // Timestamps
+  executedAt      DateTime    @default(now())
+  squaredOffAt    DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order           Order?      @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId, executedAt])
+  @@map("trades")
+}
+
+// ============================================================
+// TRADING - POSITIONS (Open)
+// ============================================================
+
+model Position {
+  id              String      @id @default(cuid())
+  userId          String
+  segment         String      // Segment: EQUITY, FUTURES, OPTIONS
+  productType     String      // ProductType: INTRADAY, DELIVERY, CARRY_FORWARD
+  tradeDirection  String      // TradeDirection: BUY, SELL
+  
+  // Instrument
+  symbol          String
+  instrumentId    String?
+  optionType      String?     // OptionType: CE, PE
+  strikePrice     Float?
+  expiryDate      DateTime?
+  lotSize         Int         @default(1)
+  lots            Int         @default(1)
+  quantity        Int
+  
+  // Cost
+  entryPrice      Float       // Average entry price
+  currentPrice    Float       @default(0)
+  totalInvested   Float
+  currentValue    Float       @default(0)
+  
+  // P&L
+  unrealizedPnl   Float       @default(0)
+  realizedPnl     Float       @default(0)
+  
+  // Margin
+  marginUsed      Float       @default(0)
+  
+  // Stop Loss / Target / Exit
+  stopLoss          Float?
+  target            Float?
+  lastCheckedPrice  Float?       // For range-based SL/Target trigger detection
+  slTriggerLock     String?      // Idempotency lock: set when SL/Target is being executed
+  exitReason        String?
+  
+  // Status
+  isOpen          Boolean     @default(true)
+  squaredOffAt    DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isOpen])
+  @@index([userId, segment, isOpen])
+  @@index([userId, symbol, isOpen])
+  @@map("positions")
+}
+
+// ============================================================
+// PORTFOLIO
+// ============================================================
+
+model Portfolio {
+  id              String   @id @default(cuid())
+  userId          String
+  date            DateTime @default(now())
+  
+  // Snapshot
+  totalValue      Float    @default(0)
+  equityValue     Float    @default(0)
+  futuresValue    Float    @default(0)
+  optionsValue    Float    @default(0)
+  cashBalance     Float    @default(0)
+  
+  // Returns
+  dayPnl          Float    @default(0)
+  totalPnl        Float    @default(0)
+  dayReturn       Float    @default(0)
+  totalReturn     Float    @default(0)
+  
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@unique([userId, date])
+  @@map("portfolios")
+}
+
+// ============================================================
+// MARKET METADATA
+// ============================================================
+
+model Sector {
+  id              String   @id @default(cuid())
+  name            String   @unique // "Banking", "IT", "Pharma"
+  indexSymbol     String?  // "BANKNIFTY", "NIFTYIT"
+  todayChange     Float    @default(0)
+  topStockSymbol  String?
+  topStockChange  Float?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("sectors")
+}
+
+model MarketHoliday {
+  id              String   @id @default(cuid())
+  name            String   // "Republic Day", "Diwali"
+  date            DateTime @unique
+  isMuhurat       Boolean  @default(false) // Muhurat Trading
+  muhuratStart    String?  // "18:15"
+  muhuratEnd      String?  // "19:15"
+  createdAt       DateTime @default(now())
+
+  @@map("market_holidays")
+}
+
+model FnOBanEntry {
+  id              String   @id @default(cuid())
+  stockSymbol     String
+  stockName       String
+  banStartDate    DateTime
+  banEndDate      DateTime?
+  reason          String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("fno_ban_entries")
+}
+
+model MarketBreadth {
+  id              String   @id @default(cuid())
+  date            DateTime @default(now())
+  advances        Int      @default(0)
+  declines        Int      @default(0)
+  unchanged       Int      @default(0)
+  week52Highs     Int      @default(0)
+  week52Lows      Int      @default(0)
+  upperCircuit     Int      @default(0)
+  lowerCircuit     Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@map("market_breadth")
+}
+
+// ============================================================
+// CHALLENGES & LEADERBOARD
+// ============================================================
+
+model Challenge {
+  id              String         @id @default(cuid())
+  title           String
+  description     String
+  challengeType   String         // ChallengeType: RETURN_SPRINT, RISK_MANAGER, VOLUME_MASTER, ACCURACY_KING
+  targetMetric    String         // "return%", "max_drawdown", "volume"
+  targetValue     Float
+  prize           String
+  prizeValue      Float?
+  startDate       DateTime
+  endDate         DateTime
+  maxParticipants Int?
+  currentParticipants Int        @default(0)
+  status          String         @default("UPCOMING") // ChallengeStatus: UPCOMING, ACTIVE, COMPLETED, CANCELLED
+  tier            String         @default("FREE") // SubscriptionTier required: FREE, PREMIUM
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  participations  ChallengeParticipation[]
+
+  @@map("challenges")
+}
+
+model ChallengeParticipation {
+  id              String   @id @default(cuid())
+  challengeId     String
+  userId          String
+  progress        Float    @default(0)
+  result          String?  // "WON", "LOST", "IN_PROGRESS"
+  reward          String?
+  joinedAt        DateTime @default(now())
+  completedAt     DateTime?
+
+  challenge       Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, userId])
+  @@map("challenge_participations")
+}
+
+// ============================================================
+// LEARNING
+// ============================================================
+
+model LearningPath {
+  id              String   @id @default(cuid())
+  title           String
+  description     String
+  category        String   // "Beginner", "Technical Analysis", "Risk Management"
+  totalModules    Int
+  estimatedHours  Int
+  difficulty      String   @default("Beginner")
+  accentColor     String   @default("#0058be")
+  order           Int      @default(0)
+  isActive        Boolean  @default(true)
+  tier            String   @default("FREE") // SubscriptionTier required: FREE, PREMIUM
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  modules         LearningModule[]
+
+  @@map("learning_paths")
+}
+
+model LearningModule {
+  id              String   @id @default(cuid())
+  pathId          String
+  title           String
+  description     String
+  content         String?  // Markdown content
+  videoUrl        String?
+  duration        Int      // minutes
+  order           Int      @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  path            LearningPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
+
+  @@map("learning_modules")
+}
+
+model UserProgress {
+  id              String   @id @default(cuid())
+  userId          String
+  moduleId        String
+  isCompleted     Boolean  @default(false)
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, moduleId])
+  @@map("user_progress")
+}
+
+// ============================================================
+// ADMIN PANEL
+// ============================================================
+
+model Admin {
+  id              String        @id @default(cuid())
+  username        String        @unique
+  passwordHash    String
+  name            String
+  email           String        @unique
+  role            String        @default("ADMIN") // ADMIN, SUPER_ADMIN
+  isActive        Boolean       @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  activityLogs    ActivityLog[]
+
+  @@map("admins")
+}
+
+model ActivityLog {
+  id              String   @id @default(cuid())
+  adminId         String
+  action          String   // LOGIN, USER_BLOCK, USER_UNBLOCK, UPDATE_SETTINGS, etc.
+  targetId        String?  // ID of the target entity (user, setting, etc.)
+  details         String?  // JSON string with additional details
+  ipAddress       String?
+  createdAt       DateTime @default(now())
+
+  admin           Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model PlatformSettings {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  value           String
+  description     String?
+  updatedAt       DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+// ============================================================
+// WATCHLIST
+// ============================================================
+
+model WatchlistItem {
+  id              String   @id @default(cuid())
+  userId          String
+  symbol          String
+  name            String?
+  segment         String   @default("EQUITY")
+  addedAt         DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, symbol])
+  @@index([userId])
+  @@map("watchlist_items")
+}
+
+model Watchlist {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String   @default("My Watchlist")
+  symbols         String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("watchlists")
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+model Notification {
+  id              String   @id @default(cuid())
+  userId          String
+  title           String
+  body            String
+  icon            String?
+  type            String   @default("INFO") // INFO, WARNING, SUCCESS, ERROR
+  category        String   @default("general")
+  link            String?
+  isRead          Boolean  @default(false)
+  readAt          DateTime?
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model NotificationLog {
+  id              String   @id @default(cuid())
+  userId          String
+  type            String
+  title           String
+  body            String
+  url             String?
+  isRead          Int      @default(0)
+  isPushed        Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_logs")
+}
+
+// ============================================================
+// PRICE ALERTS
+// ============================================================
+
+model PriceAlert {
+  id              String   @id @default(cuid())
+  userId          String
+  symbol          String
+  targetPrice     Float
+  condition       String   @default("above") // above, below
+  isTriggered     Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+
+  @@map("price_alerts")
+}
+
+// ============================================================
+// PUSH SUBSCRIPTIONS
+// ============================================================
+
+model PushSubscription {
+  id              String   @id @default(cuid())
+  userId          String
+  endpoint        String
+  p256dh          String
+  auth            String
+  deviceInfo      String?
+  userAgent       String?
+  isActive        Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+
+  @@map("push_subscriptions")
+}
+
+// ============================================================
+// SAVED ANALYSES
+// ============================================================
+
+model SavedAnalysis {
+  id              String   @id @default(cuid())
+  userId          String
+  symbol          String
+  instrumentType  String   @default("stock") // stock, future, option
+  name            String   @default("Untitled Analysis")
+  timeframe       String   @default("1D")
+  chartType       String   @default("candlestick")
+  indicators      String   @default("[]") // JSON array
+  drawings        String   @default("[]") // JSON array
+  notes           String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+
+  @@map("saved_analyses")
+}
+
+// ============================================================
+// SUBSCRIPTION TRANSACTIONS
+// ============================================================
+
+model SubscriptionTransaction {
+  id                  String   @id @default(cuid())
+  userId              String
+  plan                String
+  amount              Int      @default(0) // in paise
+  razorpayOrderId     String   @unique
+  razorpayPaymentId   String?
+  razorpaySignature   String?
+  status              String   @default("created") // created, paid, failed, refunded
+  startDate           DateTime
+  endDate             DateTime
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+
+  @@map("subscription_transactions")
+}
+
+// ============================================================
+// SUPPORT TICKETS
+// ============================================================
+
+model SupportTicket {
+  id              String   @id @default(cuid())
+  userId          String
+  subject         String
+  message         String
+  category        String   @default("GENERAL")
+  priority        String   @default("MEDIUM")
+  status          String   @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED, CLOSED
+  reply           String?
+  repliedAt       DateTime?
+  assignedTo      String?
+  adminResponse   String?
+  resolvedAt      String?
+  closedAt        String?
+  userAgent       String?
+  pageUrl         String?
+  attachments     String?  // JSON array
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replies         TicketReply[]
+  @@index([userId])
+
+  @@map("support_tickets")
+}
+
+model TicketReply {
+  id              String   @id @default(cuid())
+  ticketId        String
+  senderType      String   // USER, ADMIN
+  senderId        String
+  senderName      String
+  message         String
+  isInternal      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  ticket          SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("ticket_replies")
+}

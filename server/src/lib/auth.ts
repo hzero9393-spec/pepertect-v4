@@ -1,6 +1,6 @@
-import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
-import { config } from '../config.js'
+
+const JWT_SECRET = process.env.JWT_SECRET || 'pepertect-fallback-secret-key'
 
 export interface JwtPayload {
   userId: string
@@ -8,23 +8,16 @@ export interface JwtPayload {
   role: string
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  const salt = await bcrypt.genSalt(12)
-  return bcrypt.hash(password, salt)
-}
-
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(password, hash)
-}
-
-export function generateToken(payload: JwtPayload): string {
-  return jwt.sign(payload, config.jwtSecret, { expiresIn: config.jwtExpiresIn } as jwt.SignOptions)
-}
-
 export function verifyToken(token: string): JwtPayload | null {
   try {
-    return jwt.verify(token, config.jwtSecret) as JwtPayload
+    return jwt.verify(token, JWT_SECRET) as JwtPayload
   } catch {
     return null
   }
+}
+
+export function getTokenFromAuthHeader(authHeader: string | null | undefined): string | null {
+  if (!authHeader) return null
+  if (authHeader.startsWith('Bearer ')) return authHeader.slice(7)
+  return null
 }
