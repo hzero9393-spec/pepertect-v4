@@ -187,35 +187,49 @@ export function OptionChainPage() {
     return () => { cancelled = true }
   }, [index])
 
-  // WebSocket option chain stream
+  // Option chain data — fetch via Vercel API (fast) + WS for live updates
   useEffect(() => {
     if (!expiry) return
 
     let cancelled = false
-    setOcError(null) // Reset error on new subscription
+    setOcError(null)
+    setLoading(true)
 
+    // 1. Immediate fetch from Vercel API proxy (fast, 1-2s from Vercel)
+    fetch(`/api/options/chain?underlying=${index}&expiry=${expiry}`)
+      .then(r => r.json())
+      .then(json => {
+        if (cancelled) return
+        if (json?.success && json?.data?.strikes?.length > 0) {
+          setData(json.data)
+          setOcError(null)
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
+
+    // 2. WebSocket subscription for live updates (fallback + real-time refresh)
     wsClient.subscribe('options', { underlying: index, expiry })
 
     const unsub = wsClient.on('options:update', (msg) => {
       if (!cancelled && msg && msg.underlying?.toUpperCase() === index.toUpperCase() && msg.expiry === expiry) {
         setData(msg)
-        setOcError(null) // Clear error when data arrives
+        setOcError(null)
       }
     })
 
-    // Listen for server-side token error
     const unsubError = wsClient.on('options:error', (msg) => {
       if (!cancelled && msg?.message === 'UPSTOX_TOKEN_MISSING') {
         setOcError('upstox_token')
       }
     })
 
-    // Timeout: if no data in 5s, show error
+    // Timeout: if no data in 8s, show error
     const timeout = setTimeout(() => {
       if (!cancelled && !data) {
         setOcError('timeout')
       }
-    }, 5000)
+    }, 8000)
 
     setLive(true)
 
