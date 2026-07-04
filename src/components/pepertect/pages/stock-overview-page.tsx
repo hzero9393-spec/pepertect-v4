@@ -529,10 +529,10 @@ export function StockOverviewPage() {
     })
   }, [wsQuote])
 
-  // Fallback: REST polling only when WebSocket is disconnected
+  // Fallback: REST polling only when WebSocket is disconnected (10s, not 1s)
   useEffect(() => {
     if (wsStatus === 'connected') return // No need for REST polling when WS is active
-    const interval = setInterval(() => fetchDetail(true), 1000) // 1s for near-real-time updates
+    const interval = setInterval(() => fetchDetail(true), 10000)
     return () => clearInterval(interval)
   }, [fetchDetail, wsStatus])
 
@@ -543,10 +543,10 @@ export function StockOverviewPage() {
     }
   }, [stockDetail?.isFuturesAvailable, stockDetail?.isOptionsAvailable, fetchFnoData])
 
-  // Auto-refresh F&O data every 5s when F&O tab is active
+  // Auto-refresh F&O data every 10s when F&O tab is active (reduced from 5s)
   useEffect(() => {
     if (overviewTab !== 'fno') return
-    const interval = setInterval(fetchFnoData, 5000)
+    const interval = setInterval(fetchFnoData, 10000)
     return () => clearInterval(interval)
   }, [overviewTab, fetchFnoData])
 

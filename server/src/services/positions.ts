@@ -132,7 +132,7 @@ export class PositionsService {
   private async startPolling(userId: string) {
     this.positionsDirty.set(userId, true)
     this.pollPositions(userId) // immediate
-    const timer = setInterval(() => this.pollPositions(userId), 10000)
+    const timer = setInterval(() => this.pollPositions(userId), 30000) // 30s — event-driven, not real-time
     this.pollTimers.set(userId, timer)
   }
 

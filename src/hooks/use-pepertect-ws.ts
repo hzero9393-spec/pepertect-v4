@@ -62,11 +62,8 @@ export function usePepertectWS(): UsePepertectWS {
   }, [])
 
   const reconnect = useCallback(() => {
-    if (token) {
-      wsClient.disconnect()
-      setTimeout(() => wsClient.connect(token), 500)
-    }
-  }, [token])
+    wsClient.reconnect()
+  }, [])
 
   return { status, subscribe, unsubscribe, send, reconnect, on }
 }

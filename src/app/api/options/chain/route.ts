@@ -11,10 +11,34 @@ const INSTRUMENT_KEYS: Record<string, string> = {
   SENSEX: 'BSE_INDEX|SENSEX',
 }
 
-// ISR: cache for 5 seconds. 100 users in same 5s window = only 1 Upstox API call.
-// Vercel edge serves cached response to all subsequent requests instantly.
+// ──────────────────────────────────────────────────────────────────────
+// In-memory cache — survives across invocations within the same serverless
+// instance warm period. For 100 users polling every 5s, only ~1 Upstox
+// call per 5s per index+expiry combination instead of 100 separate calls.
+// ──────────────────────────────────────────────────────────────────────
+const CACHE_TTL_MS = 5000 // 5 seconds — same as client poll interval
+const cache = new Map<string, { data: any; timestamp: number }>()
+
+function getCached(key: string): any | null {
+  const entry = cache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    cache.delete(key)
+    return null
+  }
+  return entry.data
+}
+
+function setCache(key: string, data: any) {
+  // Evict stale entries first (keep cache clean)
+  const now = Date.now()
+  for (const [k, v] of cache) {
+    if (now - v.timestamp > CACHE_TTL_MS * 2) cache.delete(k)
+  }
+  cache.set(key, { data, timestamp: now })
+}
+
 export const dynamic = 'force-dynamic'
-export const revalidate = 5
 
 export async function GET(request: Request) {
   try {
@@ -31,7 +55,15 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: false, error: `Unknown underlying: ${underlying}` }, { status: 400 })
     }
 
-    // Check token expiry
+    // ─── Cache check — serve from memory if fresh ──────────────────
+    const cacheKey = `${underlying}:${expiry}`
+    const cached = getCached(cacheKey)
+    if (cached) {
+      // Return cached data with a flag so client knows it's cached
+      return NextResponse.json({ success: true, data: cached, cached: true })
+    }
+
+    // ─── Check token expiry ────────────────────────────────────────
     try {
       const payload = JSON.parse(Buffer.from(UPSTOX_TOKEN.split('.')[1], 'base64').toString())
       if (payload.exp * 1000 < Date.now()) {
@@ -41,6 +73,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: false, error: 'UPSTOX_TOKEN_INVALID' }, { status: 503 })
     }
 
+    // ─── Fetch from Upstox (only when cache miss) ──────────────────
     const url = `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(instrumentKey)}&expiry_date=${encodeURIComponent(expiry)}`
 
     const controller = new AbortController()
@@ -52,8 +85,6 @@ export async function GET(request: Request) {
         Accept: 'application/json',
       },
       signal: controller.signal,
-      // Tell Vercel to cache this upstream response too
-      next: { revalidate: 5 },
     })
     clearTimeout(timeout)
 
@@ -107,7 +138,10 @@ export async function GET(request: Request) {
       maxPainStrike,
     }
 
-    return NextResponse.json({ success: true, data: update })
+    // ─── Store in cache before returning ───────────────────────────
+    setCache(cacheKey, update)
+
+    return NextResponse.json({ success: true, data: update, cached: false })
   } catch (err: any) {
     if (err.name === 'AbortError') {
       return NextResponse.json({ success: false, error: 'TIMEOUT' }, { status: 504 })

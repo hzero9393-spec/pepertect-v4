@@ -110,6 +110,11 @@ const UPSTOX_STOCKS: Record<string, string> = {
 
 // ─── Service ──────────────────────────────────────────────────────────────
 
+export type MarketDataUpdateCallback = (
+  stocks: Record<string, any>,
+  indices: Record<string, any>,
+) => void
+
 export class MarketDataService {
   private clients = new Set<ClientConnection>()
   private latestIndices: Record<string, any> = {}
@@ -117,6 +122,7 @@ export class MarketDataService {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private lastPollTime = 0
   private running = false
+  private updateCallbacks: MarketDataUpdateCallback[] = []
 
   // Data source tracking
   private activeSource: 'yahoo' | 'upstox' | 'database' | 'none' = 'none'
@@ -125,7 +131,7 @@ export class MarketDataService {
   private upstoxTokenChecked = false
   private consecutiveYahooErrors = 0
   private consecutiveUpstoxErrors = 0
-  private baseInterval = 500
+  private baseInterval = 1000
   private maxInterval = 5000
 
   // Yahoo batches
@@ -135,6 +141,12 @@ export class MarketDataService {
   get indices() { return this.latestIndices }
   get stocks() { return this.latestStocks }
   get source() { return this.activeSource }
+  get clientCount() { return this.clients.size }
+
+  /** Register a callback fired after every successful market data poll */
+  onUpdate(cb: MarketDataUpdateCallback) {
+    this.updateCallbacks.push(cb)
+  }
 
   addClient(client: ClientConnection) {
     this.clients.add(client)
@@ -437,6 +449,15 @@ export class MarketDataService {
     for (const client of this.clients) {
       if (client.ws.readyState === 1) { // WebSocket.OPEN
         try { client.ws.send(msg) } catch {}
+      }
+    }
+
+    // Notify update callbacks (e.g. derived data service)
+    if (this.updateCallbacks.length > 0) {
+      const stocks = this.latestStocks
+      const indices = this.latestIndices
+      for (const cb of this.updateCallbacks) {
+        try { cb(stocks, indices) } catch {}
       }
     }
   }

@@ -53,16 +53,14 @@ const wss = new WebSocketServer({
 
 const wsManager = new WebSocketManager(wss)
 
-// Wire services together
-const marketService = (wsManager as any).marketService
-const autoExitService = (wsManager as any).autoExitService
-const positionsService = (wsManager as any).positionsService
+// Wire services together (services are public readonly on WebSocketManager)
+const { marketService, autoExitService, positionsService, optionChainService } = wsManager
 
 if (autoExitService && marketService) {
   autoExitService.setMarketService(marketService)
 }
-if (positionsService && marketService) {
-  positionsService.setServices(marketService, (wsManager as any).optionChainService)
+if (positionsService && marketService && optionChainService) {
+  positionsService.setServices(marketService, optionChainService)
 }
 
 // ─── Stats endpoint ───────────────────────────────────────────────────

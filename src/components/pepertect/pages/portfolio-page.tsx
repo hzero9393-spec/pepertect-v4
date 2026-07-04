@@ -168,8 +168,8 @@ export default function PortfolioPage() {
 
   useEffect(() => {
     loadData()
-    // Auto-refresh every 10 seconds (prices are updated in real-time via useStockData)
-    const interval = setInterval(fetchPortfolio, 10000)
+    // Auto-refresh every 30s (prices are updated in real-time via useStockData)
+    const interval = setInterval(fetchPortfolio, 30000)
     return () => clearInterval(interval)
   }, [loadData, fetchPortfolio])
 

@@ -1,11 +1,14 @@
 // ─── Global Market Data Manager ─────────────────────────────────────────────
-// Singleton that fetches real-time market data from multiple sources
-// Primary: Yahoo Finance (free, no auth, real live data)
-// Fallback: Upstox API (when token is valid)
-// Final fallback: Database cached data
 //
-// Architecture:
-//   Yahoo Finance / Upstox API → MarketDataManager (server polling) → SSE/REST → Frontend
+// ⚠️ DEPRECATED — This file is NO LONGER USED.
+// All market data now flows through the Render WebSocket server:
+//   Render WS Server (1 fetch) → WebSocket push → ALL users
+//
+// See: src/hooks/use-market-data.ts (the active frontend data layer)
+// See: server/src/services/marketData.ts (the server-side poller)
+//
+// DO NOT import this file. It exists only as a reference.
+// To be deleted in a future cleanup.
 
 import { cache, CacheKeys, CacheTTL } from '@/lib/cache'
 

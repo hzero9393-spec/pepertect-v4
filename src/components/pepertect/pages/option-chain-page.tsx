@@ -9,6 +9,8 @@ import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
 import { StrikeOverviewDrawer } from '@/components/pepertect/ui/strike-overview-drawer'
 import { X, Minus, Plus, ChevronDown } from 'lucide-react'
+import { MarketDataSocket } from '@/hooks/use-market-data'
+import type { WsOptionChainUpdate } from '@/hooks/use-market-data'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -185,50 +187,97 @@ export function OptionChainPage() {
     return () => { cancelled = true }
   }, [index])
 
-  // Option chain data — polled via Vercel API with ISR caching.
-  // Vercel caches for 5s: 100 users = 1 Upstox API call per 5s (same efficiency as WS).
-  // No WebSocket used for OC — saves Render bandwidth, WS reserved for market/positions/trades.
+  // Option chain via WebSocket — server polls once per 5s, broadcasts to ALL users
   useEffect(() => {
     if (!expiry) return
 
-    let cancelled = false
-    setOcError(null)
-    setLoading(true)
+    const manager = MarketDataSocket.getInstance()
+    manager.connect()
 
-    const fetchData = async () => {
-      if (cancelled) return
-      try {
-        const res = await fetch(`/api/options/chain?underlying=${index}&expiry=${expiry}`)
-        const json = await res.json()
-        if (cancelled) return
+    // Subscribe to options channel via WS
+    manager.subscribeOptionChain(index, expiry)
+
+    // Listen for updates
+    const unsub = manager.onOptionChainUpdate(index, (update: WsOptionChainUpdate) => {
+      if (update.underlying !== index) return
+      if (expiry && update.expiry !== expiry) return
+
+      // Transform WS format to component format
+      const transformedStrikes = update.chain.map(s => ({
+        strike_price: s.strikePrice,
+        underlying_spot_price: update.spot,
+        call_options: {
+          instrument_key: '',
+          market_data: {
+            ltp: s.ce?.ltp ?? 0,
+            volume: s.ce?.volume ?? 0,
+            oi: s.ce?.oi ?? 0,
+            close_price: (s.ce?.ltp ?? 0) - (s.ce?.change ?? 0),
+            bid_price: s.ce?.bidPrice ?? 0,
+            bid_qty: 0,
+            ask_price: s.ce?.askPrice ?? 0,
+            ask_qty: 0,
+            prev_oi: (s.ce?.oi ?? 0) - (s.ce?.oiChange ?? 0),
+          },
+          option_greeks: {
+            iv: s.ce?.iv ?? 0,
+            delta: s.ce?.delta ?? 0,
+            theta: 0, vega: 0, gamma: 0, pop: 0,
+          },
+        },
+        put_options: {
+          instrument_key: '',
+          market_data: {
+            ltp: s.pe?.ltp ?? 0,
+            volume: s.pe?.volume ?? 0,
+            oi: s.pe?.oi ?? 0,
+            close_price: (s.pe?.ltp ?? 0) - (s.pe?.change ?? 0),
+            bid_price: s.pe?.bidPrice ?? 0,
+            bid_qty: 0,
+            ask_price: s.pe?.askPrice ?? 0,
+            ask_qty: 0,
+            prev_oi: (s.pe?.oi ?? 0) - (s.pe?.oiChange ?? 0),
+          },
+          option_greeks: {
+            iv: s.pe?.iv ?? 0,
+            delta: s.pe?.delta ?? 0,
+            theta: 0, vega: 0, gamma: 0, pop: 0,
+          },
+        },
+      }))
+
+      setData({
+        underlying: update.underlying,
+        spot: update.spot,
+        pcr: update.pcr,
+        expiry: update.expiry,
+        strikes: transformedStrikes,
+        timestamp: update.timestamp,
+        totalCallOI: 0,
+        totalPutOI: 0,
+        maxPainStrike: update.maxPain,
+      } as any)
+      setOcError(null)
+      setLoading(false)
+      setLive(true)
+    })
+
+    // Keep the initial REST fetch as fallback (one-time, no interval)
+    setLoading(true)
+    fetch(`/api/options/chain?underlying=${index}&expiry=${expiry}`)
+      .then(res => res.json())
+      .then(json => {
         if (json?.success && json?.data?.strikes?.length > 0) {
           setData(json.data)
           setOcError(null)
-          return true
         }
-        if (json?.error === 'UPSTOX_TOKEN_EXPIRED') setOcError('upstox_token')
-        return false
-      } catch { return false }
-      finally { if (!cancelled) setLoading(false) }
-    }
-
-    // Immediate first fetch
-    fetchData()
-
-    // Poll every 5 seconds (matches Vercel ISR revalidate window)
-    const pollTimer = setInterval(fetchData, 5000)
-
-    // Timeout: if no data in 8s, show error
-    const timeout = setTimeout(() => {
-      if (!cancelled && !data) setOcError('timeout')
-    }, 8000)
-
-    setLive(true)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
 
     return () => {
-      cancelled = true
-      clearInterval(pollTimer)
-      clearTimeout(timeout)
+      unsub()
+      manager.unsubscribeOptionChain(index, expiry)
       setLive(false)
     }
   }, [index, expiry])

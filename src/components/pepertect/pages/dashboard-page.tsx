@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Card,
   CardContent,
@@ -31,7 +31,7 @@ import { useAppStore } from '@/lib/store'
 import { formatPrice, formatPercent } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useIndexData, useStockData, useMarketDataStatus, type WsIndexQuote, type WsStockQuote } from '@/hooks/use-market-data'
+import { useIndexData, useStockData, useMarketDataStatus, useDerivedData, type DerivedMarketData, type WsIndexQuote, type WsStockQuote } from '@/hooks/use-market-data'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -181,26 +181,16 @@ function StockRow({ stock, onClick }: { stock: StockData; onClick: () => void })
 export function DashboardPage() {
   const { navigateToStock, navigateToIndex } = useAppStore()
 
-  // Data states
+  // Data states (indices metadata from REST, everything else from WebSocket)
   const [indices, setIndices] = useState<IndexData[]>([])
-  const [apiGainers, setApiGainers] = useState<StockData[]>([])
-  const [apiLosers, setApiLosers] = useState<StockData[]>([])
-
-  // Loading states
-  const [indicesLoading, setIndicesLoading] = useState(true)
-  const [gainersLoading, setGainersLoading] = useState(true)
-  const [losersLoading, setLosersLoading] = useState(true)
-
-  // Market status, breadth, holidays, sectors
-  const [marketStatus, setMarketStatus] = useState<MarketStatusData | null>(null)
-  const [marketBreadth, setMarketBreadth] = useState<MarketBreadthData | null>(null)
   const [holidays, setHolidays] = useState<HolidayData[]>([])
-  const [sectors, setSectors] = useState<SectorData[]>([])
-  const [marketStatusLoading, setMarketStatusLoading] = useState(true)
-  const [breadthLoading, setBreadthLoading] = useState(true)
   const [holidaysLoading, setHolidaysLoading] = useState(true)
-  const [sectorsLoading, setSectorsLoading] = useState(true)
   const [holidaysOpen, setHolidaysOpen] = useState(false)
+  const [indicesLoading, setIndicesLoading] = useState(true)
+
+  // Refresh state
+  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // WebSocket real-time data
   const { indices: wsIndices, status: wsIndexStatus } = useIndexData()
@@ -208,12 +198,84 @@ export function DashboardPage() {
   const wsConnectionStatus = useMarketDataStatus()
   const isWsConnected = wsConnectionStatus === 'connected'
 
-  // Refresh state
-  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Derived market data from WebSocket (gainers, losers, breadth, status, sectors)
+  const { derived } = useDerivedData()
 
-  // ─── Fetch Indices ───────────────────────────────────────────
+  // ─── Map WS derived data to existing interfaces ──────────────
+  const apiGainers: StockData[] = useMemo(() => {
+    if (!derived?.gainers?.length) return []
+    return derived.gainers.map((g, i) => ({
+      id: `gainer-${i}`,
+      symbol: g.symbol,
+      name: g.name,
+      sector: '',
+      currentPrice: g.currentPrice,
+      change: g.change,
+      changePercent: g.changePercent,
+      volume: g.volume ?? undefined,
+      isFuturesAvailable: false,
+      isOptionsAvailable: false,
+    }))
+  }, [derived?.gainers])
+
+  const apiLosers: StockData[] = useMemo(() => {
+    if (!derived?.losers?.length) return []
+    return derived.losers.map((l, i) => ({
+      id: `loser-${i}`,
+      symbol: l.symbol,
+      name: l.name,
+      sector: '',
+      currentPrice: l.currentPrice,
+      change: l.change,
+      changePercent: l.changePercent,
+      volume: l.volume ?? undefined,
+      isFuturesAvailable: false,
+      isOptionsAvailable: false,
+    }))
+  }, [derived?.losers])
+
+  const marketBreadth: MarketBreadthData | null = useMemo(() => {
+    if (!derived?.breadth) return null
+    return {
+      id: 'breadth',
+      date: new Date().toISOString().split('T')[0],
+      advances: derived.breadth.advances,
+      declines: derived.breadth.declines,
+      unchanged: derived.breadth.unchanged,
+    }
+  }, [derived?.breadth])
+
+  const marketStatus: MarketStatusData | null = useMemo(() => {
+    if (!derived?.marketStatus) return null
+    return {
+      status: derived.marketStatus.status as MarketStatusData['status'],
+      message: derived.marketStatus.message,
+      istTime: derived.marketStatus.istTime,
+      nextOpen: derived.marketStatus.nextOpen,
+    }
+  }, [derived?.marketStatus])
+
+  const sectors: SectorData[] = useMemo(() => {
+    if (!derived?.sectors?.length) return []
+    return derived.sectors.map(s => ({
+      id: s.id,
+      name: s.name,
+      indexSymbol: s.indexSymbol,
+      todayChange: s.todayChange,
+      topStockSymbol: s.topStockSymbol,
+      topStockChange: s.topStockChange,
+      isActive: s.isActive,
+    }))
+  }, [derived?.sectors])
+
+  // Loading states derived from WS data availability
+  const gainersLoading = !derived
+  const losersLoading = !derived
+  const marketStatusLoading = !derived
+  const breadthLoading = !derived
+  const sectorsLoading = !derived
+
+  // ─── One-time fetches ───────────────────────────────────────
   const fetchIndices = useCallback(async () => {
     try {
       const res = await fetch('/api/indices')
@@ -225,55 +287,6 @@ export function DashboardPage() {
     finally { setIndicesLoading(false) }
   }, [])
 
-  // ─── Fetch Gainers ───────────────────────────────────────────
-  const fetchGainers = useCallback(async () => {
-    try {
-      const res = await fetch('/api/stocks/gainers')
-      if (res.ok) {
-        const json = await res.json()
-        if (json.data?.length > 0) setApiGainers(json.data)
-      }
-    } catch { /* silent */ }
-    finally { setGainersLoading(false) }
-  }, [])
-
-  // ─── Fetch Losers ────────────────────────────────────────────
-  const fetchLosers = useCallback(async () => {
-    try {
-      const res = await fetch('/api/stocks/losers')
-      if (res.ok) {
-        const json = await res.json()
-        if (json.data?.length > 0) setApiLosers(json.data)
-      }
-    } catch { /* silent */ }
-    finally { setLosersLoading(false) }
-  }, [])
-
-  // ─── Fetch Market Status ─────────────────────────────────────
-  const fetchMarketStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/market/status')
-      if (res.ok) {
-        const json = await res.json()
-        if (json.success && json.data) setMarketStatus(json.data)
-      }
-    } catch { /* silent */ }
-    finally { setMarketStatusLoading(false) }
-  }, [])
-
-  // ─── Fetch Market Breadth ─────────────────────────────────────
-  const fetchMarketBreadth = useCallback(async () => {
-    try {
-      const res = await fetch('/api/market/breadth')
-      if (res.ok) {
-        const json = await res.json()
-        if (json.success && json.data) setMarketBreadth(json.data)
-      }
-    } catch { /* silent */ }
-    finally { setBreadthLoading(false) }
-  }, [])
-
-  // ─── Fetch Holidays ───────────────────────────────────────────
   const fetchHolidays = useCallback(async () => {
     try {
       const res = await fetch('/api/market/holidays')
@@ -285,37 +298,23 @@ export function DashboardPage() {
     finally { setHolidaysLoading(false) }
   }, [])
 
-  // ─── Fetch Sectors ────────────────────────────────────────────
-  const fetchSectors = useCallback(async () => {
-    try {
-      const res = await fetch('https://pepertect-api.onrender.com/api/sectors')
-      if (res.ok) {
-        const json = await res.json()
-        if (json.success && json.data?.length > 0) setSectors(json.data)
-      }
-    } catch { /* silent */ }
-    finally { setSectorsLoading(false) }
+  // ─── Initial mount: fetch indices metadata & holidays once ───
+  useEffect(() => {
+    fetchIndices()
+    fetchHolidays()
+  }, [fetchIndices, fetchHolidays])
+
+  // ─── Refresh handler (manual only, no polling) ──────────────
+  const refreshAll = useCallback(() => {
+    setIsRefreshing(true)
+    setLastRefreshed(new Date())
+    // Brief spin animation, data comes via WebSocket automatically
+    setTimeout(() => setIsRefreshing(false), 500)
   }, [])
 
-  // ─── Refresh all data ─────────────────────────────────────────
-  const refreshAll = useCallback(async () => {
-    setIsRefreshing(true)
-    await Promise.allSettled([
-      fetchIndices(),
-      fetchGainers(),
-      fetchLosers(),
-      fetchMarketStatus(),
-      fetchMarketBreadth(),
-      fetchSectors(),
-    ])
-    setLastRefreshed(new Date())
-    setIsRefreshing(false)
-  }, [fetchIndices, fetchGainers, fetchLosers, fetchMarketStatus, fetchMarketBreadth, fetchSectors])
-
-  // ─── Merge WebSocket index data with REST data ────────────────────
+  // ─── Merge WebSocket index data with REST metadata ──────────
   const mergedIndices = useMemo(() => {
-    if (isWsConnected && Object.keys(wsIndices).length > 0) {
-      // WS data is primary — overlay on REST data
+    if (Object.keys(wsIndices).length > 0) {
       return indices.map(idx => {
         const wsQuote = wsIndices[idx.symbol]
         if (wsQuote) {
@@ -334,66 +333,7 @@ export function DashboardPage() {
       })
     }
     return indices
-  }, [indices, wsIndices, isWsConnected])
-
-  // ─── Fast real-time index data via SSE (primary) ─────────────
-  // SSE via useIndexData() handles real-time index updates.
-  // No need for separate /api/market/live polling — SSE pushes updates at 500ms.
-  useEffect(() => {
-    fetchIndices()
-  }, [fetchIndices])
-
-  // ─── Load all data ───────────────────────────────────────────
-  useEffect(() => {
-    fetchIndices()
-    fetchGainers()
-    fetchLosers()
-    fetchMarketStatus()
-    fetchMarketBreadth()
-    fetchHolidays()
-    fetchSectors()
-    setLastRefreshed(new Date())
-
-    // ─── Smart polling based on SSE connection ──────────────────
-    // SSE connected: skip indices (real-time via SSE) & market status (fetched elsewhere),
-    //   poll gainers/losers/breadth every 30s (they don't change every second),
-    //   poll sectors every 5min (rarely change).
-    // SSE disconnected: poll all every 5s as fallback.
-    if (isWsConnected) {
-      // One-time fetch for sectors (they rarely change)
-      fetchSectors()
-      // Gainers/losers/breadth/status — slower poll when SSE is live
-      const slowPoll = setInterval(() => {
-        fetchGainers()
-        fetchLosers()
-        fetchMarketBreadth()
-        fetchMarketStatus()
-        setLastRefreshed(new Date())
-      }, 30000)
-      // Sectors re-fetch every 5min
-      const sectorPoll = setInterval(() => {
-        fetchSectors()
-      }, 300000)
-      return () => {
-        clearInterval(slowPoll)
-        clearInterval(sectorPoll)
-      }
-    } else {
-      // No SSE — poll all every 5s
-      refreshTimerRef.current = setInterval(() => {
-        fetchIndices()
-        fetchGainers()
-        fetchLosers()
-        fetchMarketStatus()
-        fetchMarketBreadth()
-        fetchSectors()
-        setLastRefreshed(new Date())
-      }, 5000)
-      return () => {
-        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
-      }
-    }
-  }, [fetchIndices, fetchGainers, fetchLosers, fetchMarketStatus, fetchMarketBreadth, fetchHolidays, fetchSectors, isWsConnected])
+  }, [indices, wsIndices])
 
   // ─── Listen for index detail events from ticker ────────────
   useEffect(() => {

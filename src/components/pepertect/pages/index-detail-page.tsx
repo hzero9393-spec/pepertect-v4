@@ -195,8 +195,8 @@ export function IndexDetailPage() {
   useEffect(() => {
     if (symbol) {
       fetchDetail()
-      // Auto-refresh every 2 seconds for real-time index data
-      const interval = setInterval(fetchDetail, 2000)
+      // Reduced from 2s to 10s — index data is near-real-time via WS
+      const interval = setInterval(fetchDetail, 10000)
       return () => clearInterval(interval)
     }
   }, [symbol, fetchDetail])

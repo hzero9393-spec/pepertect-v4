@@ -34,7 +34,7 @@ import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/t
 import { motion, AnimatePresence } from 'framer-motion'
 import { formatINR, formatVolume, formatPercent, calculateBrokerage } from '@/lib/format'
 import { StockLogo } from '@/components/pepertect/ui/stock-logo'
-import { useStockData, type WsStockQuote } from '@/hooks/use-market-data'
+import { useStockData, useDerivedData, usePositions, type WsStockQuote, type WsPositionUpdate, type DerivedMarketData } from '@/hooks/use-market-data'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -725,6 +725,8 @@ export function TradingPage() {
 
   // ── WebSocket Real-Time Data ──────────────────────────────────────────
   const { stocks: wsStockQuotes, status: wsStatus } = useStockData()
+  const { derived } = useDerivedData()
+  const wsPositions = usePositions()
 
   // ── State ─────────────────────────────────────────────────────────────
   const [stocks, setStocks] = useState<TradeableStock[]>([])
@@ -958,27 +960,63 @@ export function TradingPage() {
     })
   }, [wsStockQuotes, wsStatus])
 
-  // Fallback: REST polling only when WebSocket is disconnected
+  // ── WS: Update gainers from derived data (zero polling) ──────────────
   useEffect(() => {
-    if (wsStatus === 'connected') return
-    const interval = setInterval(() => fetchStocks(true, stockPage, false), 5000) // 5s fallback
-    return () => clearInterval(interval)
-  }, [fetchStocks, wsStatus, stockPage])
+    if (derived?.gainers?.length) {
+      setGainers(derived.gainers.map(g => ({
+        id: g.symbol,
+        symbol: g.symbol, name: g.name,
+        currentPrice: g.currentPrice, change: g.change,
+        changePercent: g.changePercent, volume: g.volume ?? 0,
+        sector: '', lotSize: 0, isFnoBan: false,
+        isFuturesAvailable: false, isOptionsAvailable: false,
+        marketCap: 0, week52High: 0, week52Low: 0,
+        peRatio: null,
+      })))
+    }
+  }, [derived?.gainers])
 
-  // Auto-refresh gainers/losers every 5s (less frequent - WS handles prices)
+  // ── WS: Update losers from derived data (zero polling) ────────────────
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchGainers(true)
-      fetchLosers(true)
-    }, 5000)
-    return () => clearInterval(interval)
-  }, [fetchGainers, fetchLosers])
+    if (derived?.losers?.length) {
+      setLosers(derived.losers.map(l => ({
+        id: l.symbol,
+        symbol: l.symbol, name: l.name,
+        currentPrice: l.currentPrice, change: l.change,
+        changePercent: l.changePercent, volume: l.volume ?? 0,
+        sector: '', lotSize: 0, isFnoBan: false,
+        isFuturesAvailable: false, isOptionsAvailable: false,
+        marketCap: 0, week52High: 0, week52Low: 0,
+        peRatio: null,
+      })))
+    }
+  }, [derived?.losers])
 
-  // Auto-refresh positions every 5s
+  // ── WS: Update positions from WebSocket (zero polling) ────────────────
   useEffect(() => {
-    const interval = setInterval(fetchPositions, 5000)
-    return () => clearInterval(interval)
-  }, [fetchPositions])
+    if (wsPositions.length > 0) {
+      setPositions(wsPositions.map(p => ({
+        id: p.positionId,
+        segment: p.segment,
+        productType: '',
+        tradeDirection: p.tradeDirection,
+        symbol: p.symbol,
+        quantity: 0,
+        entryPrice: 0,
+        currentPrice: p.currentPrice,
+        totalInvested: 0,
+        currentValue: 0,
+        unrealizedPnl: p.unrealizedPnl,
+        unrealizedPnlPercent: p.unrealizedPnlPercent,
+        marginUsed: 0,
+        isOpen: p.isOpen,
+        createdAt: '',
+      })))
+      // Also update portfolio P&L
+      const totalPnl = wsPositions.reduce((sum, p) => sum + p.unrealizedPnl, 0)
+      setPortfolio(prev => prev ? { ...prev, totalUnrealizedPnl: totalPnl } : prev)
+    }
+  }, [wsPositions])
 
   // Load watchlist symbols into shared store on mount
   useEffect(() => {

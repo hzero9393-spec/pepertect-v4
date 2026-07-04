@@ -107,12 +107,12 @@ export function WatchlistSidebar() {
     }
   }, [watchlistSidebarOpen, token, fetchWatchlist])
 
-  // Auto-refresh every 5 seconds when sidebar is open
+  // Auto-refresh every 30s when sidebar is open (prices update via WS)
   useEffect(() => {
     if (watchlistSidebarOpen && token) {
       intervalRef.current = setInterval(() => {
         fetchWatchlist(false)
-      }, 5000)
+      }, 30000)
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)

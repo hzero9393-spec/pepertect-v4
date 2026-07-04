@@ -5,9 +5,9 @@ import { getAutoExitWorker } from '@/lib/auto-exit-worker'
 /**
  * POST /api/trade/sl-monitor
  *
- * Ensures the server-side auto-exit worker is running.
- * Also performs one immediate check cycle for this user.
- * The REAL monitoring is done by the background worker (auto-exit-worker.ts).
+ * Lightweight: just ensures the server-side auto-exit worker is running.
+ * No per-user DB queries — the worker handles ALL users internally.
+ * Frontend no longer polls this; it listens to WS "exit" events instead.
  */
 export async function POST(request: Request) {
   try {
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[SL Monitor API] Error:', error)
     return NextResponse.json(
-      { error: 'Monitor cycle failed' },
+      { error: 'Monitor check failed' },
       { status: 500 }
     )
   }
