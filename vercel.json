@@ -9,7 +9,7 @@
     "src/app/api/stocks/detail/[symbol]/route.ts": {
       "maxDuration": 30
     },
-    "src/app/api/options/chain/[underlying]/route.ts": {
+    "src/app/api/options/chain/route.ts": {
       "maxDuration": 30
     },
     "src/app/api/**/*.ts": {

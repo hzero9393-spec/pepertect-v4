@@ -191,6 +191,10 @@ export function OptionChainPage() {
   useEffect(() => {
     if (!expiry) return
 
+    // Reset data for clean state on expiry/index change
+    setData(null)
+    setLive(false)
+
     const manager = MarketDataSocket.getInstance()
     manager.connect()
 
@@ -313,7 +317,7 @@ export function OptionChainPage() {
   const spotChange = useMemo(() => {
     if (!data) return null
     const first = strikes[0]
-    if (!first) return null
+    if (!first?.call_options?.market_data) return null
     return data.spot - first.call_options.market_data.close_price
   }, [data, strikes])
 
@@ -594,11 +598,13 @@ export function OptionChainPage() {
             {/* ── Scrollable Body ── */}
             <div ref={tableBodyRef} className="flex-1 overflow-y-auto custom-scrollbar">
               {strikes.map(s => {
-                const ce = s.call_options.market_data
-                const pe = s.put_options.market_data
+                const ce = s.call_options?.market_data
+                const pe = s.put_options?.market_data
                 const isATM = s.strike_price === atm
                 const ceITM = s.strike_price < data!.spot
                 const peITM = s.strike_price > data!.spot
+
+                if (!ce || !pe) return null
 
                 if (isLTP) {
                   // ── LTP MODE: CE LTP + Chg | STRIKE | Chg + PE LTP ──
@@ -637,7 +643,7 @@ export function OptionChainPage() {
                             underlying: index,
                             strike: s.strike_price,
                             optionType: 'CE',
-                            instrumentKey: s.call_options.instrument_key,
+                            instrumentKey: s.call_options?.instrument_key || '',
                           })}
                         >
                           {fmtLtp(ce.ltp)}
@@ -672,7 +678,7 @@ export function OptionChainPage() {
                             underlying: index,
                             strike: s.strike_price,
                             optionType: 'PE',
-                            instrumentKey: s.put_options.instrument_key,
+                            instrumentKey: s.put_options?.instrument_key || '',
                           })}
                         >
                           {fmtLtp(pe.ltp)}
@@ -999,7 +1005,7 @@ export function OptionChainPage() {
         const strikeData = data?.strikes.find(s => s.strike_price === strikeOverview.strike)
         if (!strikeData) return null
         const optData = strikeOverview.optionType === 'CE' ? strikeData.call_options : strikeData.put_options
-        if (!optData) return null
+        if (!optData?.market_data) return null
         return (
           <StrikeOverviewDrawer
             open={!!strikeOverview}
