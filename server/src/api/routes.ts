@@ -224,7 +224,7 @@ router.get('/debug/option-chain', async (req: Request, res: Response) => {
     const fetchStart = Date.now()
     const apiRes = await fetch(url, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(20000),
     })
     const fetchTime = Date.now() - fetchStart
 

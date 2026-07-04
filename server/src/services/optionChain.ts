@@ -157,7 +157,7 @@ export class OptionChainService {
     this.fetchAndBroadcast(underlying, expiry)
 
     // Then every 1000ms
-    const timer = setInterval(() => this.fetchAndBroadcast(underlying, expiry), 1000)
+    const timer = setInterval(() => this.fetchAndBroadcast(underlying, expiry), 5000)
     this.pollTimers.set(key, timer)
   }
 
@@ -195,7 +195,7 @@ export class OptionChainService {
       const url = `${'https://api.upstox.com/v2'}/option/chain?instrument_key=${encodeURIComponent(config.instrumentKey)}&expiry_date=${encodeURIComponent(expiry)}`
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(15000),
       })
       if (!res.ok) {
         const now = Date.now()
