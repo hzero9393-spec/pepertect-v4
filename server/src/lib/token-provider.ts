@@ -34,7 +34,20 @@ export async function getUpstoxToken(): Promise<string | null> {
 
   // 2. Environment variable
   const envToken = process.env.UPSTOX_ACCESS_TOKEN
-  if (envToken) return envToken
+  if (envToken && envToken.length > 50) return envToken
+
+  // 2b. Built-in fallback token (expires 2025-11-01)
+  const FALLBACK_TOKEN = 'eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI1VUM2OTgiLCJqdGkiOiI2YTQzNGFiNDk4ODZkYTU5NmFkMTI1NDIiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzgyNzk0OTMyLCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTQzOTI4MDB9.EWI1yDJCUS_fgXe9TkNEamg8hK0ku9yGIyS2zE6ZLH0'
+  if (FALLBACK_TOKEN) {
+    // Decode to check expiry
+    try {
+      const payload = JSON.parse(Buffer.from(FALLBACK_TOKEN.split('.')[1], 'base64').toString())
+      if (payload.exp * 1000 > Date.now()) {
+        console.log('[TokenProvider] Using built-in fallback token')
+        return FALLBACK_TOKEN
+      }
+    } catch {}
+  }
 
   // 3. Database (platform_settings table)
   const now = Date.now()

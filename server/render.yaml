@@ -15,6 +15,7 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: UPSTOX_ACCESS_TOKEN
+        value: eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI1VUM2OTgiLCJqdGkiOiI2YTQzNGFiNDk4ODZkYTU5NmFkMTI1NDIiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzgyNzk0OTMyLCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTQzOTI4MDB9.EWI1yDJCUS_fgXe9TkNEamg8hK0ku9yGIyS2zE6ZLH0
         sync: false
       - key: UPSTOX_API_KEY
         sync: false
