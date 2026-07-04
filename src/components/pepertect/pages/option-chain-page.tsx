@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
 import { useAppStore } from '@/lib/store'
@@ -286,10 +286,10 @@ export function OptionChainPage() {
     }
   }, [index, expiry])
 
-  // Auto-scroll to ATM once
+  // Auto-scroll to spot price badge once
   useEffect(() => {
     if (data && tableBodyRef.current && !scrolledOnce.current) {
-      const el = tableBodyRef.current.querySelector('[data-atm="true"]')
+      const el = tableBodyRef.current.querySelector('[data-spot-badge="true"]')
       if (el) { el.scrollIntoView({ block: 'center' }); scrolledOnce.current = true }
     }
   }, [data?.strikes?.length])
@@ -566,7 +566,7 @@ export function OptionChainPage() {
               <div
                 className="grid text-[9px] font-bold uppercase tracking-wider"
                 style={{
-                  gridTemplateColumns: isLTP ? '1fr 64px 1fr' : '1fr 64px 1fr',
+                  gridTemplateColumns: isLTP ? '1fr 72px 1fr' : '1fr 72px 1fr',
                   color: C.textDim,
                 }}
               >
@@ -584,158 +584,158 @@ export function OptionChainPage() {
               </div>
 
               {/* CE / PE labels */}
-              <div className="grid" style={{ gridTemplateColumns: '1fr 64px 1fr' }}>
+              <div className="grid" style={{ gridTemplateColumns: '1fr 72px 1fr' }}>
                 <div className="text-center text-[9px] font-bold py-0.5 border-r" style={{ color: C.green, background: C.greenBg, borderColor: C.border }}>
-                  CALLS
+                  Call Price
                 </div>
-                <div />
+                <div className="text-center text-[9px] font-bold py-0.5" style={{ color: C.text, fontWeight: 800 }}>
+                  Strike
+                </div>
                 <div className="text-center text-[9px] font-bold py-0.5" style={{ color: C.red, background: C.redBg }}>
-                  PUTS
+                  Put Price
                 </div>
               </div>
             </div>
 
             {/* ── Scrollable Body ── */}
             <div ref={tableBodyRef} className="flex-1 overflow-y-auto custom-scrollbar">
-              {strikes.map(s => {
+              {strikes.map((s, idx) => {
                 const ce = s.call_options?.market_data
                 const pe = s.put_options?.market_data
                 const isATM = s.strike_price === atm
                 const ceITM = s.strike_price < data!.spot
                 const peITM = s.strike_price > data!.spot
+                // Show spot price badge between the two strikes that bracket spot
+                const showSpotBadge = idx > 0 && s.strike_price >= data!.spot && strikes[idx - 1].strike_price < data!.spot
+                // Straddle: CE LTP + PE LTP at ATM
+                const straddle = isATM && ce && pe ? ce.ltp + pe.ltp : 0
 
                 if (!ce || !pe) return null
 
                 if (isLTP) {
-                  // ── LTP MODE: CE LTP + Chg | STRIKE | Chg + PE LTP ──
                   const ceChg = fmtChg(ce.ltp, ce.close_price)
                   const peChg = fmtChg(pe.ltp, pe.close_price)
 
                   return (
-                    <div
-                      key={s.strike_price}
-                      data-atm={isATM ? 'true' : undefined}
-                      className="grid items-center transition-colors duration-75"
-                      style={{
-                        gridTemplateColumns: '1fr 64px 1fr',
-                        height: '42px',
-                        borderBottom: `1px solid ${isATM ? C.atmBorder : C.borderLight}`,
-                        background: isATM ? C.atmBg : 'transparent',
-                      }}
-                      onMouseEnter={e => { if (!isATM) e.currentTarget.style.background = '#F0F4FF' }}
-                      onMouseLeave={e => { if (!isATM) e.currentTarget.style.background = 'transparent' }}
-                    >
-                      {/* CE Side: LTP + Chg */}
-                      <div
-                        className="flex items-center justify-end gap-3 pr-3 border-r"
-                        style={{ borderColor: C.border, background: ceITM && !isATM ? C.greenBg : 'transparent' }}
-                      >
-                        <span
-                          className="text-[10px] w-12 text-right"
-                          style={{ color: ceChg.up === true ? C.green : ceChg.up === false ? C.red : C.textMuted }}
+                    <React.Fragment key={s.strike_price}>
+                      {showSpotBadge && (
+                        <div
+                          data-spot-badge="true"
+                          className="grid items-center"
+                          style={{ gridTemplateColumns: '1fr 72px 1fr', height: '30px', borderBottom: `1px solid ${C.borderLight}` }}
                         >
-                          {ceChg.text}
-                        </span>
-                        <button
-                          className="text-[12px] font-bold text-right cursor-pointer hover:opacity-70 transition-opacity w-16"
-                          style={{ color: C.text }}
-                          onClick={() => setStrikeOverview({
-                            underlying: index,
-                            strike: s.strike_price,
-                            optionType: 'CE',
-                            instrumentKey: s.call_options?.instrument_key || '',
-                          })}
-                        >
-                          {fmtLtp(ce.ltp)}
-                        </button>
-                      </div>
-
-                      {/* Strike */}
+                          <div className="border-r" style={{ borderColor: C.border, background: C.greenBg }} />
+                          <div className="flex items-center justify-center">
+                            <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold text-white whitespace-nowrap" style={{ background: '#374151' }}>
+                              Spot: {data!.spot.toFixed(2)}
+                            </span>
+                          </div>
+                          <div style={{ background: C.redBg }} />
+                        </div>
+                      )}
                       <div
-                        className="flex items-center justify-center text-[12px] font-bold border-r cursor-pointer hover:opacity-70"
+                        data-atm={isATM ? 'true' : undefined}
+                        className="grid items-center transition-colors duration-75"
                         style={{
-                          borderColor: C.border,
-                          color: isATM ? C.primary : C.text,
+                          gridTemplateColumns: '1fr 72px 1fr',
+                          height: isATM ? '48px' : '40px',
+                          borderBottom: `1px solid ${isATM ? C.atmBorder : C.borderLight}`,
                           background: isATM ? C.atmBg : 'transparent',
                         }}
-                        onClick={() => {
-                          if (ce.oi >= pe.oi) openTrade('CE', s.strike_price, ce.ltp, 'BUY')
-                          else openTrade('PE', s.strike_price, pe.ltp, 'BUY')
-                        }}
+                        onMouseEnter={e => { if (!isATM) e.currentTarget.style.background = '#F0F4FF' }}
+                        onMouseLeave={e => { if (!isATM) e.currentTarget.style.background = 'transparent' }}
                       >
-                        {formatINRWhole(s.strike_price)}
-                      </div>
-
-                      {/* PE Side: LTP + Chg */}
-                      <div
-                        className="flex items-center pl-3 gap-3"
-                        style={{ background: peITM && !isATM ? C.redBg : 'transparent' }}
-                      >
-                        <button
-                          className="text-[12px] font-bold cursor-pointer hover:opacity-70 transition-opacity w-16"
-                          style={{ color: C.text }}
-                          onClick={() => setStrikeOverview({
-                            underlying: index,
-                            strike: s.strike_price,
-                            optionType: 'PE',
-                            instrumentKey: s.put_options?.instrument_key || '',
-                          })}
+                        <div
+                          className="flex items-center justify-end gap-3 pr-3 border-r"
+                          style={{ borderColor: C.border, background: ceITM && !isATM ? C.greenBg : 'transparent' }}
                         >
-                          {fmtLtp(pe.ltp)}
-                        </button>
-                        <span
-                          className="text-[10px] w-12"
-                          style={{ color: peChg.up === true ? C.green : peChg.up === false ? C.red : C.textMuted }}
+                          <span className="text-[10px] w-12 text-right" style={{ color: ceChg.up === true ? C.green : ceChg.up === false ? C.red : C.textMuted }}>
+                            {ceChg.text}
+                          </span>
+                          <button
+                            className="text-[12px] font-bold text-right cursor-pointer hover:opacity-70 transition-opacity w-16"
+                            style={{ color: C.text }}
+                            onClick={() => setStrikeOverview({ underlying: index, strike: s.strike_price, optionType: 'CE', instrumentKey: s.call_options?.instrument_key || '' })}
+                          >
+                            {fmtLtp(ce.ltp)}
+                          </button>
+                        </div>
+                        <div
+                          className="flex flex-col items-center justify-center border-r cursor-pointer hover:opacity-70"
+                          style={{ borderColor: C.border, background: isATM ? C.atmBg : 'transparent' }}
+                          onClick={() => {
+                            if (ce.oi >= pe.oi) openTrade('CE', s.strike_price, ce.ltp, 'BUY')
+                            else openTrade('PE', s.strike_price, pe.ltp, 'BUY')
+                          }}
                         >
-                          {peChg.text}
-                        </span>
+                          <span className="text-[12px] font-bold" style={{ color: isATM ? C.primary : C.text }}>
+                            {formatINRWhole(s.strike_price)}
+                          </span>
+                          {isATM && straddle > 0 && (
+                            <span className="text-[8px] font-semibold mt-0.5" style={{ color: C.textMuted }}>
+                              Straddle: {straddle.toFixed(1)}
+                            </span>
+                          )}
+                        </div>
+                        <div
+                          className="flex items-center pl-3 gap-3"
+                          style={{ background: peITM && !isATM ? C.redBg : 'transparent' }}
+                        >
+                          <button
+                            className="text-[12px] font-bold cursor-pointer hover:opacity-70 transition-opacity w-16"
+                            style={{ color: C.text }}
+                            onClick={() => setStrikeOverview({ underlying: index, strike: s.strike_price, optionType: 'PE', instrumentKey: s.put_options?.instrument_key || '' })}
+                          >
+                            {fmtLtp(pe.ltp)}
+                          </button>
+                          <span className="text-[10px] w-12" style={{ color: peChg.up === true ? C.green : peChg.up === false ? C.red : C.textMuted }}>
+                            {peChg.text}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    </React.Fragment>
                   )
                 } else {
-                  // ── OI MODE: CE OI | STRIKE | PE OI (ONLY OI, nothing else) ──
                   return (
-                    <div
-                      key={s.strike_price}
-                      data-atm={isATM ? 'true' : undefined}
-                      className="grid items-center transition-colors duration-75"
-                      style={{
-                        gridTemplateColumns: '1fr 64px 1fr',
-                        height: '42px',
-                        borderBottom: `1px solid ${isATM ? C.atmBorder : C.borderLight}`,
-                        background: isATM ? C.atmBg : 'transparent',
-                      }}
-                      onMouseEnter={e => { if (!isATM) e.currentTarget.style.background = '#F0F4FF' }}
-                      onMouseLeave={e => { if (!isATM) e.currentTarget.style.background = 'transparent' }}
-                    >
-                      {/* CE OI */}
+                    <React.Fragment key={s.strike_price}>
+                      {showSpotBadge && (
+                        <div
+                          data-spot-badge="true"
+                          className="grid items-center"
+                          style={{ gridTemplateColumns: '1fr 72px 1fr', height: '30px', borderBottom: `1px solid ${C.borderLight}` }}
+                        >
+                          <div className="border-r" style={{ borderColor: C.border, background: C.greenBg }} />
+                          <div className="flex items-center justify-center">
+                            <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold text-white whitespace-nowrap" style={{ background: '#374151' }}>
+                              Spot: {data!.spot.toFixed(2)}
+                            </span>
+                          </div>
+                          <div style={{ background: C.redBg }} />
+                        </div>
+                      )}
                       <div
-                        className="flex items-center justify-end pr-3 border-r text-[12px] font-bold"
-                        style={{ borderColor: C.border, color: C.text, background: ceITM && !isATM ? C.greenBg : 'transparent' }}
-                      >
-                        {ce.oi > 0 ? fmtOI(ce.oi) : '-'}
-                      </div>
-
-                      {/* Strike */}
-                      <div
-                        className="flex items-center justify-center text-[12px] font-bold border-r"
+                        data-atm={isATM ? 'true' : undefined}
+                        className="grid items-center transition-colors duration-75"
                         style={{
-                          borderColor: C.border,
-                          color: isATM ? C.primary : C.text,
+                          gridTemplateColumns: '1fr 72px 1fr',
+                          height: '40px',
+                          borderBottom: `1px solid ${isATM ? C.atmBorder : C.borderLight}`,
                           background: isATM ? C.atmBg : 'transparent',
                         }}
+                        onMouseEnter={e => { if (!isATM) e.currentTarget.style.background = '#F0F4FF' }}
+                        onMouseLeave={e => { if (!isATM) e.currentTarget.style.background = 'transparent' }}
                       >
-                        {formatINRWhole(s.strike_price)}
+                        <div className="flex items-center justify-end pr-3 border-r text-[12px] font-bold" style={{ borderColor: C.border, color: C.text, background: ceITM && !isATM ? C.greenBg : 'transparent' }}>
+                          {ce.oi > 0 ? fmtOI(ce.oi) : '-'}
+                        </div>
+                        <div className="flex items-center justify-center text-[12px] font-bold border-r" style={{ borderColor: C.border, color: isATM ? C.primary : C.text, background: isATM ? C.atmBg : 'transparent' }}>
+                          {formatINRWhole(s.strike_price)}
+                        </div>
+                        <div className="flex items-center pl-3 text-[12px] font-bold" style={{ color: C.text, background: peITM && !isATM ? C.redBg : 'transparent' }}>
+                          {pe.oi > 0 ? fmtOI(pe.oi) : '-'}
+                        </div>
                       </div>
-
-                      {/* PE OI */}
-                      <div
-                        className="flex items-center pl-3 text-[12px] font-bold"
-                        style={{ color: C.text, background: peITM && !isATM ? C.redBg : 'transparent' }}
-                      >
-                        {pe.oi > 0 ? fmtOI(pe.oi) : '-'}
-                      </div>
-                    </div>
+                    </React.Fragment>
                   )
                 }
               })}
