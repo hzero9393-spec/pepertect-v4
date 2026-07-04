@@ -1,14 +1,13 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
 import { useAppStore } from '@/lib/store'
-import { formatINR, formatINRWhole, formatPrice, formatPercent } from '@/lib/format'
+import { formatINR, formatINRWhole, formatPrice } from '@/lib/format'
 import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
 import { StrikeOverviewDrawer } from '@/components/pepertect/ui/strike-overview-drawer'
-import { X, Minus, Plus, ChevronDown } from 'lucide-react'
+import { X, Minus, Plus, ChevronDown, TrendingUp, TrendingDown, Activity, BarChart3, Zap, ArrowUpDown, Target } from 'lucide-react'
 import { MarketDataSocket } from '@/hooks/use-market-data'
 import type { WsOptionChainUpdate } from '@/hooks/use-market-data'
 
@@ -85,6 +84,10 @@ function fmtChg(ltp: number, close: number): { text: string; up: boolean | null 
   return { text: `${sign}${pct.toFixed(1)}%`, up: chg >= 0 }
 }
 
+function fmtSpread(ce: number, pe: number): number {
+  return Math.abs(ce - pe)
+}
+
 // ─── Trade Panel State ─────────────────────────────────────────────────────
 
 interface TradeState {
@@ -107,24 +110,41 @@ const defaultTrade: TradeState = {
   stopLoss: '', target: '',
 }
 
-// ─── Color Tokens ───────────────────────────────────────────────────────────
+// ─── Professional Color System ──────────────────────────────────────────────
 
 const C = {
-  bg: '#F7F8FA',
-  surface: '#FFFFFF',
-  text: '#1a1a1a',
-  textDim: '#6b7280',
-  textMuted: '#9ca3af',
-  border: '#E5E7EB',
-  borderLight: '#F0F0F0',
-  green: '#00B386',
-  greenBg: 'rgba(0,179,134,0.05)',
-  red: '#EB5B3C',
-  redBg: 'rgba(235,91,60,0.05)',
-  atmBg: '#EEF0F4',
-  atmBorder: '#D5D9E2',
+  bg: '#0a0e17',
+  surface: '#111827',
+  surfaceAlt: '#1a2236',
+  surfaceHover: '#1e2a42',
+  cardBg: '#151d2e',
+  text: '#e8eaed',
+  textSec: '#9aa5b4',
+  textMuted: '#6b7a8d',
+  border: '#1e293b',
+  borderLight: '#1a2332',
+  borderAccent: '#2a3650',
+  green: '#22c55e',
+  greenBright: '#4ade80',
+  greenBg: 'rgba(34,197,94,0.08)',
+  greenBgStrong: 'rgba(34,197,94,0.15)',
+  red: '#ef4444',
+  redBright: '#f87171',
+  redBg: 'rgba(239,68,68,0.08)',
+  redBgStrong: 'rgba(239,68,68,0.15)',
   primary: '#00D09C',
-  headerBg: '#F4F5F7',
+  primaryBg: 'rgba(0,208,156,0.1)',
+  primaryDim: 'rgba(0,208,156,0.06)',
+  atmBg: 'rgba(0,208,156,0.07)',
+  atmBorder: 'rgba(0,208,156,0.3)',
+  headerBg: '#0d1320',
+  spotBadge: '#1e3a5f',
+  spotBadgeBorder: '#2563eb',
+  greenDim: 'rgba(34,197,94,0.03)',
+  redDim: 'rgba(239,68,68,0.03)',
+  gold: '#fbbf24',
+  blue: '#3b82f6',
+  purple: '#a78bfa',
 }
 
 // ─── Main Component ─────────────────────────────────────────────────────────
@@ -139,12 +159,11 @@ export function OptionChainPage() {
   const [ocError, setOcError] = useState<'upstox_token' | 'timeout' | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('LTP')
   const tableBodyRef = useRef<HTMLDivElement>(null)
-  const scrolledOnce = useRef(false)
+  const scrollTargetRef = useRef<string>('')
 
   const [trade, setTrade] = useState<TradeState>(defaultTrade)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmData, setConfirmData] = useState<TradeConfirmData | null>(null)
-  const [executing, setExecuting] = useState(false)
 
   // Strike overview state
   const [strikeOverview, setStrikeOverview] = useState<{
@@ -187,7 +206,7 @@ export function OptionChainPage() {
     return () => { cancelled = true }
   }, [index])
 
-  // Option chain via WebSocket — server polls once per 5s, broadcasts to ALL users
+  // Option chain via WebSocket
   useEffect(() => {
     if (!expiry) return
 
@@ -286,14 +305,24 @@ export function OptionChainPage() {
     }
   }, [index, expiry])
 
-  // Auto-scroll to spot price badge once
+  // Auto-scroll to ATM strike when data loads (fires on every index/expiry change)
   useEffect(() => {
-    if (data && tableBodyRef.current && !scrolledOnce.current) {
-      const el = tableBodyRef.current.querySelector('[data-spot-badge="true"]')
-      if (el) { el.scrollIntoView({ block: 'center' }); scrolledOnce.current = true }
-    }
-  }, [data?.strikes?.length])
-  useEffect(() => { scrolledOnce.current = false }, [index, expiry])
+    if (!data || !tableBodyRef.current) return
+    const targetKey = `${index}-${expiry}-${data.spot}`
+    if (scrollTargetRef.current === targetKey) return
+    scrollTargetRef.current = targetKey
+
+    requestAnimationFrame(() => {
+      const el = tableBodyRef.current?.querySelector('[data-atm="true"]') as HTMLElement | null
+      if (el) {
+        const container = tableBodyRef.current!
+        const containerRect = container.getBoundingClientRect()
+        const elRect = el.getBoundingClientRect()
+        const scrollOffset = el.offsetTop - container.offsetTop - (containerRect.height / 2) + (elRect.height / 2)
+        container.scrollTo({ top: Math.max(0, scrollOffset), behavior: 'smooth' })
+      }
+    })
+  }, [data?.strikes?.length, index, expiry])
 
   // Filter strikes around spot
   const strikes = useMemo(() => {
@@ -321,6 +350,27 @@ export function OptionChainPage() {
     return data.spot - first.call_options.market_data.close_price
   }, [data, strikes])
 
+  // Max OI for bar calculation
+  const maxOI = useMemo(() => {
+    let m = 0
+    for (const s of strikes) {
+      const ceOI = s.call_options?.market_data?.oi || 0
+      const peOI = s.put_options?.market_data?.oi || 0
+      m = Math.max(m, ceOI, peOI)
+    }
+    return m || 1
+  }, [strikes])
+
+  // Spread at ATM
+  const atmSpread = useMemo(() => {
+    if (!data) return 0
+    const atmStrike = data.strikes.find(s => s.strike_price === atm)
+    if (!atmStrike) return 0
+    const ceLtp = atmStrike.call_options?.market_data?.ltp || 0
+    const peLtp = atmStrike.put_options?.market_data?.ltp || 0
+    return ceLtp + peLtp
+  }, [data, atm])
+
   // ── Trade Logic ──
 
   const openTrade = useCallback((optionType: 'CE' | 'PE', strike: number, ltp: number, side: 'BUY' | 'SELL') => {
@@ -345,7 +395,7 @@ export function OptionChainPage() {
     if (!token || fillPrice <= 0) return
 
     // Refresh user data to get latest marginUsed before showing confirm
-    let freshAvailable = availableMargin // fallback to current state
+    let freshAvailable = availableMargin
     try {
       const meRes = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       if (meRes.ok) {
@@ -426,18 +476,15 @@ export function OptionChainPage() {
           totalValue: resData.order?.totalValue,
           brokerage: resData.order?.brokerage,
         })
-        bumpTradeSignal() // notify positions page to refetch
+        bumpTradeSignal()
         if (resData.balance !== undefined && userData) {
           setUser({ ...userData, virtualBalance: resData.balance, totalPnl: resData.totalPnl ?? userData.totalPnl })
-          // Also refresh full user data from server to sync marginUsed
           fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d?.user) setUser(d.user) })
             .catch(() => {})
         }
-        // Set SL/Target on the newly created position if provided
         if ((trade.stopLoss || trade.target) && token && resData.order?.id) {
-          // Find the position that was just created and set SL/Target
           const slBody: Record<string, unknown> = { stopLoss: null, target: null }
           if (trade.stopLoss) slBody.stopLoss = parseFloat(trade.stopLoss)
           if (trade.target) slBody.target = parseFloat(trade.target)
@@ -459,29 +506,39 @@ export function OptionChainPage() {
 
   const isLTP = viewMode === 'LTP'
 
+  // ── Column definitions for grid ──
+  // LTP mode:  CE_LTP | CE_CHG | STRIKE | SPREAD | PE_CHG | PE_LTP
+  // OI mode:   CE_OI  | CE_OICHG | STRIKE | SPREAD | PE_OICHG | PE_OI
+
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 92px)', background: C.bg }}>
 
       {/* ═══ INDEX TABS ═══ */}
-      <div className="shrink-0 border-b" style={{ borderColor: C.border, background: C.surface }}>
-        <div className="flex items-center px-1">
+      <div className="shrink-0" style={{ background: C.headerBg, borderBottom: `1px solid ${C.border}` }}>
+        <div className="flex items-center px-3 pt-2 pb-0 gap-1">
           {INDICES.map(ind => (
             <button
               key={ind.key}
               onClick={() => setIndex(ind.key)}
-              className="relative px-4 py-2.5 text-[12px] font-semibold tracking-wide transition-colors whitespace-nowrap"
-              style={{ color: index === ind.key ? C.text : C.textDim }}
+              className="relative px-4 py-2.5 text-[12px] font-semibold tracking-wide transition-all duration-200 rounded-t-lg"
+              style={{
+                color: index === ind.key ? C.primary : C.textMuted,
+                background: index === ind.key ? C.surface : 'transparent',
+              }}
             >
               {ind.label}
               {index === ind.key && (
-                <span className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full" style={{ background: C.primary }} />
+                <span
+                  className="absolute bottom-0 left-2 right-2 h-[2.5px] rounded-t-full"
+                  style={{ background: `linear-gradient(90deg, ${C.primary}, ${C.greenBright})` }}
+                />
               )}
             </button>
           ))}
-          <div className="ml-auto pr-3 flex items-center gap-1.5">
+          <div className="ml-auto pr-1 flex items-center gap-2">
             {live && (
-              <span className="flex items-center gap-1 text-[10px] font-medium" style={{ color: C.primary }}>
-                <span className="w-1.5 h-1.5 rounded-full animate-live-pulse" style={{ background: C.primary }} />
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider" style={{ background: C.primaryBg, color: C.primary }}>
+                <span className="w-1.5 h-1.5 rounded-full animate-live-pulse" style={{ background: C.primary, boxShadow: `0 0 6px ${C.primary}` }} />
                 LIVE
               </span>
             )}
@@ -489,56 +546,94 @@ export function OptionChainPage() {
         </div>
       </div>
 
-      {/* ═══ MARKET STRIP ═══ */}
+      {/* ═══ MARKET INFO BAR ═══ */}
       {data && (
         <div
-          className="shrink-0 px-3 py-1.5 flex items-center gap-3 overflow-x-auto no-scrollbar text-[11px] border-b"
-          style={{ background: C.surface, borderColor: C.border }}
+          className="shrink-0 px-3 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar"
+          style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}
         >
-          <span className="font-semibold" style={{ color: C.text }}>
-            {formatPrice(data.spot)}
-          </span>
-          {spotChange !== null && spotChange !== 0 && (
-            <span className="font-medium" style={{ color: spotChange > 0 ? C.green : C.red }}>
-              {spotChange > 0 ? '+' : ''}{formatPrice(Math.abs(spotChange))}
+          {/* Spot Price */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: C.surfaceAlt }}>
+            <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.textMuted }}>Spot</span>
+            <span className="text-[14px] font-bold" style={{ color: C.text, fontVariantNumeric: 'tabular-nums' }}>
+              {formatPrice(data.spot)}
             </span>
+            {spotChange !== null && spotChange !== 0 && (
+              <span className="flex items-center gap-0.5 text-[11px] font-semibold px-1.5 py-0.5 rounded" style={{ color: spotChange > 0 ? C.green : C.red, background: spotChange > 0 ? C.greenBg : C.redBg }}>
+                {spotChange > 0 ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
+                {spotChange > 0 ? '+' : ''}{formatPrice(Math.abs(spotChange))}
+              </span>
+            )}
+          </div>
+
+          {/* PCR */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: C.surfaceAlt }}>
+            <Activity className="size-3.5" style={{ color: C.textMuted }} />
+            <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.textMuted }}>PCR</span>
+            <span className="text-[12px] font-bold" style={{ color: data.pcr > 1 ? C.green : data.pcr < 0.8 ? C.red : C.text, fontVariantNumeric: 'tabular-nums' }}>
+              {data.pcr > 0 ? data.pcr.toFixed(2) : '-'}
+            </span>
+          </div>
+
+          {/* Max Pain */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: C.surfaceAlt }}>
+            <Target className="size-3.5" style={{ color: C.gold }} />
+            <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.textMuted }}>Max Pain</span>
+            <span className="text-[12px] font-bold" style={{ color: C.gold, fontVariantNumeric: 'tabular-nums' }}>
+              {data.maxPainStrike > 0 ? formatINRWhole(data.maxPainStrike) : '-'}
+            </span>
+          </div>
+
+          {/* ATM Straddle */}
+          {atmSpread > 0 && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ background: C.surfaceAlt }}>
+              <ArrowUpDown className="size-3.5" style={{ color: C.purple }} />
+              <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.textMuted }}>Straddle</span>
+              <span className="text-[12px] font-bold" style={{ color: C.purple, fontVariantNumeric: 'tabular-nums' }}>
+                {atmSpread.toFixed(1)}
+              </span>
+            </div>
           )}
-          <span style={{ color: C.textMuted }}>PCR</span>
-          <span className="font-semibold" style={{ color: data.pcr > 1 ? C.green : data.pcr < 0.8 ? C.red : C.text }}>
-            {data.pcr > 0 ? data.pcr.toFixed(2) : '-'}
-          </span>
-          <span style={{ color: C.textMuted }}>Lot</span>
-          <span className="font-semibold" style={{ color: C.text }}>{lotSize}</span>
+
+          {/* Lot Size */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg ml-auto" style={{ background: C.surfaceAlt }}>
+            <BarChart3 className="size-3.5" style={{ color: C.textMuted }} />
+            <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.textMuted }}>Lot</span>
+            <span className="text-[12px] font-bold" style={{ color: C.text }}>{lotSize}</span>
+          </div>
         </div>
       )}
 
-      {/* ═══ EXPIRY BAR + TOGGLE ═══ */}
-      <div className="shrink-0 border-b flex items-center" style={{ borderColor: C.border, background: C.surface }}>
-        <div className="flex items-center overflow-x-auto no-scrollbar px-1 py-0">
+      {/* ═══ EXPIRY BAR + VIEW TOGGLE ═══ */}
+      <div className="shrink-0 flex items-center" style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+        <div className="flex items-center overflow-x-auto no-scrollbar px-3 py-1.5 gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider mr-1" style={{ color: C.textMuted }}>Expiry</span>
           {expiries.map(e => (
             <button
               key={e}
               onClick={() => setExpiry(e)}
-              className="relative px-3.5 py-2 text-[11px] font-medium whitespace-nowrap transition-colors"
-              style={{ color: expiry === e ? C.text : C.textDim }}
+              className="px-3 py-1.5 text-[11px] font-semibold rounded-md transition-all duration-200 whitespace-nowrap"
+              style={{
+                color: expiry === e ? C.text : C.textMuted,
+                background: expiry === e ? C.primaryBg : 'transparent',
+                border: expiry === e ? `1px solid rgba(0,208,156,0.3)` : '1px solid transparent',
+              }}
             >
               {fmtExpiry(e)}
-              {expiry === e && (
-                <span className="absolute bottom-0 left-1.5 right-1.5 h-[2px] rounded-full" style={{ background: C.primary }} />
-              )}
             </button>
           ))}
         </div>
-        <div className="ml-auto pr-2 shrink-0">
-          <div className="inline-flex rounded-md overflow-hidden border" style={{ borderColor: C.border }}>
-            {(['LTP', 'OI'] as ViewMode[]).map(mode => (
+        <div className="ml-auto pr-3 shrink-0">
+          <div className="inline-flex rounded-lg overflow-hidden" style={{ border: `1px solid ${C.border}` }}>
+            {(['LTP', 'OI'] as ViewMode[]).map((mode, i) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
-                className="px-3 py-1 text-[10px] font-bold tracking-wider transition-colors"
+                className="px-3.5 py-1.5 text-[10px] font-bold tracking-wider transition-all duration-200"
                 style={{
-                  background: viewMode === mode ? C.text : 'transparent',
-                  color: viewMode === mode ? C.surface : C.textDim,
+                  background: viewMode === mode ? C.primary : 'transparent',
+                  color: viewMode === mode ? '#fff' : C.textMuted,
+                  borderRight: i === 0 ? `1px solid ${C.border}` : 'none',
                 }}
               >
                 {mode}
@@ -553,48 +648,97 @@ export function OptionChainPage() {
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
-            <div className="flex items-center gap-2 text-[12px]" style={{ color: C.textMuted }}>
-              <span className="w-3 h-3 border-2 rounded-full animate-spin" style={{ borderColor: C.border, borderTopColor: C.primary }} />
-              Loading chain...
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-8 h-8 border-2 rounded-full animate-spin" style={{ borderColor: C.border, borderTopColor: C.primary }} />
+              <span className="text-[12px] font-medium" style={{ color: C.textMuted }}>Loading option chain...</span>
             </div>
           </div>
         ) : strikes.length > 0 ? (
-          <div className="flex-1 min-h-0 flex flex-col rounded-sm overflow-hidden border" style={{ borderColor: C.border, background: C.surface }}>
+          <div className="flex-1 min-h-0 flex flex-col rounded-xl overflow-hidden" style={{ border: `1px solid ${C.border}`, background: C.surface }}>
 
             {/* ── Sticky Header ── */}
             <div className="shrink-0 sticky top-0 z-10" style={{ background: C.headerBg, borderBottom: `2px solid ${C.border}` }}>
-              <div
-                className="grid text-[9px] font-bold uppercase tracking-wider"
-                style={{
-                  gridTemplateColumns: isLTP ? '1fr 72px 1fr' : '1fr 72px 1fr',
-                  color: C.textDim,
-                }}
-              >
-                <div className="flex items-center justify-center gap-3 border-r" style={{ borderColor: C.border }}>
-                  <span>CE {isLTP ? 'LTP' : 'OI'}</span>
-                  {isLTP && <span>Chg</span>}
+              {isLTP ? (
+                <>
+                  {/* Top header row: CE label | columns | PE label */}
+                  <div
+                    className="grid items-center text-[10px] font-bold uppercase tracking-wider"
+                    style={{
+                      gridTemplateColumns: '1fr 48px 68px 64px 48px 1fr',
+                      color: C.textMuted,
+                    }}
+                  >
+                    <div className="flex items-center justify-end gap-2 pr-3 border-r" style={{ borderColor: C.border }}>
+                      <span style={{ color: C.green }}>CE</span>
+                      <span>LTP</span>
+                    </div>
+                    <div className="flex items-center justify-center border-r" style={{ borderColor: C.border }}>
+                      Chg
+                    </div>
+                    <div className="flex items-center justify-center border-r" style={{ borderColor: C.border }}>
+                      <span style={{ color: C.text }}>STRIKE</span>
+                    </div>
+                    <div className="flex items-center justify-center border-r" style={{ borderColor: C.border }}>
+                      <span style={{ color: C.gold }}>SPREAD</span>
+                    </div>
+                    <div className="flex items-center justify-center border-r" style={{ borderColor: C.border }}>
+                      Chg
+                    </div>
+                    <div className="flex items-center pl-3 gap-2">
+                      <span>LTP</span>
+                      <span style={{ color: C.red }}>PE</span>
+                    </div>
+                  </div>
+                  {/* Sub-header with OI hint */}
+                  <div
+                    className="grid items-center text-[9px] font-semibold"
+                    style={{
+                      gridTemplateColumns: '1fr 48px 68px 64px 48px 1fr',
+                      borderBottom: `1px solid ${C.border}`,
+                    }}
+                  >
+                    <div className="flex items-center justify-end pr-3 border-r py-1" style={{ borderColor: C.border, color: C.green, background: C.greenDim, opacity: 0.6 }}>
+                      OI →
+                    </div>
+                    <div className="border-r" style={{ borderColor: C.border }} />
+                    <div className="border-r" style={{ borderColor: C.border }} />
+                    <div className="border-r" style={{ borderColor: C.border }} />
+                    <div className="border-r" style={{ borderColor: C.border }} />
+                    <div className="flex items-center pl-3 py-1" style={{ color: C.red, background: C.redDim, opacity: 0.6 }}>
+                      ← OI
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div
+                  className="grid items-center text-[10px] font-bold uppercase tracking-wider"
+                  style={{
+                    gridTemplateColumns: '1fr 48px 68px 64px 48px 1fr',
+                    color: C.textMuted,
+                  }}
+                >
+                  <div className="flex items-center justify-end gap-2 pr-3 border-r" style={{ borderColor: C.border }}>
+                    <span style={{ color: C.green }}>CE</span>
+                    <span>OI</span>
+                  </div>
+                  <div className="flex items-center justify-center border-r" style={{ borderColor: C.border }}>
+                    Chg
+                  </div>
+                  <div className="flex items-center justify-center border-r" style={{ borderColor: C.border }}>
+                    <span style={{ color: C.text }}>STRIKE</span>
+                  </div>
+                  <div className="flex items-center justify-center border-r" style={{ borderColor: C.border }}>
+                    <span style={{ color: C.gold }}>SPREAD</span>
+                  </div>
+                  <div className="flex items-center justify-center border-r" style={{ borderColor: C.border }}>
+                    Chg
+                  </div>
+                  <div className="flex items-center pl-3 gap-2">
+                    <span>OI</span>
+                    <span style={{ color: C.red }}>PE</span>
+                  </div>
                 </div>
-                <div className="flex items-center justify-center" style={{ color: C.text }}>
-                  STRIKE
-                </div>
-                <div className="flex items-center justify-center gap-3">
-                  {isLTP && <span>Chg</span>}
-                  <span>PE {isLTP ? 'LTP' : 'OI'}</span>
-                </div>
-              </div>
-
-              {/* CE / PE labels */}
-              <div className="grid" style={{ gridTemplateColumns: '1fr 72px 1fr' }}>
-                <div className="text-center text-[9px] font-bold py-0.5 border-r" style={{ color: C.green, background: C.greenBg, borderColor: C.border }}>
-                  Call Price
-                </div>
-                <div className="text-center text-[9px] font-bold py-0.5" style={{ color: C.text, fontWeight: 800 }}>
-                  Strike
-                </div>
-                <div className="text-center text-[9px] font-bold py-0.5" style={{ color: C.red, background: C.redBg }}>
-                  Put Price
-                </div>
-              </div>
+              )}
             </div>
 
             {/* ── Scrollable Body ── */}
@@ -605,10 +749,13 @@ export function OptionChainPage() {
                 const isATM = s.strike_price === atm
                 const ceITM = s.strike_price < data!.spot
                 const peITM = s.strike_price > data!.spot
-                // Show spot price badge between the two strikes that bracket spot
                 const showSpotBadge = idx > 0 && s.strike_price >= data!.spot && strikes[idx - 1].strike_price < data!.spot
-                // Straddle: CE LTP + PE LTP at ATM
                 const straddle = isATM && ce && pe ? ce.ltp + pe.ltp : 0
+                const spread = (ce && pe) ? fmtSpread(ce.ltp, pe.ltp) : 0
+
+                // OI bar widths (percentage of max OI)
+                const ceOIWidth = maxOI > 0 ? ((ce?.oi || 0) / maxOI) * 100 : 0
+                const peOIWidth = maxOI > 0 ? ((pe?.oi || 0) / maxOI) * 100 : 0
 
                 if (!ce || !pe) return null
 
@@ -618,121 +765,287 @@ export function OptionChainPage() {
 
                   return (
                     <React.Fragment key={s.strike_price}>
+                      {/* Spot Price Divider */}
                       {showSpotBadge && (
                         <div
                           data-spot-badge="true"
                           className="grid items-center"
-                          style={{ gridTemplateColumns: '1fr 72px 1fr', height: '30px', borderBottom: `1px solid ${C.borderLight}` }}
+                          style={{ gridTemplateColumns: '1fr 48px 68px 64px 48px 1fr', height: '28px', borderBottom: `1px solid ${C.border}` }}
                         >
-                          <div className="border-r" style={{ borderColor: C.border, background: C.greenBg }} />
-                          <div className="flex items-center justify-center">
-                            <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold text-white whitespace-nowrap" style={{ background: '#374151' }}>
-                              Spot: {data!.spot.toFixed(2)}
+                          <div className="border-r" style={{ borderColor: C.border, background: C.greenDim }} />
+                          <div className="border-r" style={{ borderColor: C.border }} />
+                          <div
+                            className="flex items-center justify-center gap-1.5"
+                            style={{ borderRight: `1px solid ${C.border}`, background: C.spotBadge }}
+                          >
+                            <Zap className="size-3" style={{ color: C.blue }} />
+                            <span className="text-[10px] font-bold" style={{ color: C.blue, fontVariantNumeric: 'tabular-nums' }}>
+                              {data!.spot.toFixed(2)}
                             </span>
                           </div>
-                          <div style={{ background: C.redBg }} />
+                          <div className="border-r" style={{ borderColor: C.border }} />
+                          <div className="border-r" style={{ borderColor: C.border }} />
+                          <div style={{ background: C.redDim }} />
                         </div>
                       )}
+
+                      {/* Row */}
                       <div
                         data-atm={isATM ? 'true' : undefined}
-                        className="grid items-center transition-colors duration-75"
+                        className="grid items-center transition-all duration-100 cursor-pointer group relative"
                         style={{
-                          gridTemplateColumns: '1fr 72px 1fr',
-                          height: isATM ? '48px' : '40px',
+                          gridTemplateColumns: '1fr 48px 68px 64px 48px 1fr',
+                          height: isATM ? '46px' : '38px',
                           borderBottom: `1px solid ${isATM ? C.atmBorder : C.borderLight}`,
                           background: isATM ? C.atmBg : 'transparent',
                         }}
-                        onMouseEnter={e => { if (!isATM) e.currentTarget.style.background = '#F0F4FF' }}
+                        onMouseEnter={e => { if (!isATM) e.currentTarget.style.background = C.surfaceHover }}
                         onMouseLeave={e => { if (!isATM) e.currentTarget.style.background = 'transparent' }}
+                        onClick={() => {
+                          if (ce.oi >= pe.oi) openTrade('CE', s.strike_price, ce.ltp, 'BUY')
+                          else openTrade('PE', s.strike_price, pe.ltp, 'BUY')
+                        }}
                       >
+                        {/* CE LTP */}
                         <div
-                          className="flex items-center justify-end gap-3 pr-3 border-r"
+                          className="flex items-center justify-end pr-3 border-r relative overflow-hidden"
                           style={{ borderColor: C.border, background: ceITM && !isATM ? C.greenBg : 'transparent' }}
                         >
-                          <span className="text-[10px] w-12 text-right" style={{ color: ceChg.up === true ? C.green : ceChg.up === false ? C.red : C.textMuted }}>
-                            {ceChg.text}
-                          </span>
-                          <button
-                            className="text-[12px] font-bold text-right cursor-pointer hover:opacity-70 transition-opacity w-16"
-                            style={{ color: C.text }}
-                            onClick={() => setStrikeOverview({ underlying: index, strike: s.strike_price, optionType: 'CE', instrumentKey: s.call_options?.instrument_key || '' })}
+                          {/* OI background bar */}
+                          {ceOIWidth > 0 && (
+                            <div
+                              className="absolute right-0 top-0 bottom-0 opacity-20"
+                              style={{
+                                width: `${ceOIWidth}%`,
+                                background: `linear-gradient(270deg, ${C.green} 0%, transparent 100%)`,
+                                transition: 'width 0.3s ease',
+                              }}
+                            />
+                          )}
+                          <span
+                            className="text-[12px] font-bold relative z-10"
+                            style={{ color: C.text, fontVariantNumeric: 'tabular-nums' }}
+                            onClick={(e) => { e.stopPropagation(); setStrikeOverview({ underlying: index, strike: s.strike_price, optionType: 'CE', instrumentKey: s.call_options?.instrument_key || '' }) }}
                           >
                             {fmtLtp(ce.ltp)}
-                          </button>
+                          </span>
                         </div>
+
+                        {/* CE Chg */}
                         <div
-                          className="flex flex-col items-center justify-center border-r cursor-pointer hover:opacity-70"
-                          style={{ borderColor: C.border, background: isATM ? C.atmBg : 'transparent' }}
-                          onClick={() => {
-                            if (ce.oi >= pe.oi) openTrade('CE', s.strike_price, ce.ltp, 'BUY')
-                            else openTrade('PE', s.strike_price, pe.ltp, 'BUY')
-                          }}
+                          className="flex items-center justify-center border-r text-[10px] font-semibold relative z-10"
+                          style={{ borderColor: C.border, color: ceChg.up === true ? C.green : ceChg.up === false ? C.red : C.textMuted, fontVariantNumeric: 'tabular-nums' }}
                         >
-                          <span className="text-[12px] font-bold" style={{ color: isATM ? C.primary : C.text }}>
+                          {ceChg.text}
+                        </div>
+
+                        {/* Strike */}
+                        <div
+                          className="flex flex-col items-center justify-center border-r relative z-10"
+                          style={{ borderColor: C.border, background: isATM ? C.primaryBg : 'transparent' }}
+                        >
+                          <span
+                            className="text-[12px] font-extrabold"
+                            style={{ color: isATM ? C.primary : C.text, fontVariantNumeric: 'tabular-nums' }}
+                          >
                             {formatINRWhole(s.strike_price)}
                           </span>
-                          {isATM && straddle > 0 && (
-                            <span className="text-[8px] font-semibold mt-0.5" style={{ color: C.textMuted }}>
-                              Straddle: {straddle.toFixed(1)}
+                          {isATM && (
+                            <span className="text-[8px] font-bold mt-px tracking-wider" style={{ color: C.primary }}>
+                              ATM
                             </span>
                           )}
                         </div>
+
+                        {/* Spread */}
                         <div
-                          className="flex items-center pl-3 gap-3"
+                          className="flex items-center justify-center border-r relative z-10"
+                          style={{ borderColor: C.border, background: isATM ? 'rgba(251,191,36,0.06)' : 'transparent' }}
+                        >
+                          {spread > 0 ? (
+                            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ color: C.gold, background: 'rgba(251,191,36,0.1)', fontVariantNumeric: 'tabular-nums' }}>
+                              {spread.toFixed(1)}
+                            </span>
+                          ) : (
+                            <span className="text-[11px]" style={{ color: C.textMuted }}>-</span>
+                          )}
+                        </div>
+
+                        {/* PE Chg */}
+                        <div
+                          className="flex items-center justify-center border-r text-[10px] font-semibold relative z-10"
+                          style={{ borderColor: C.border, color: peChg.up === true ? C.green : peChg.up === false ? C.red : C.textMuted, fontVariantNumeric: 'tabular-nums' }}
+                        >
+                          {peChg.text}
+                        </div>
+
+                        {/* PE LTP */}
+                        <div
+                          className="flex items-center pl-3 relative overflow-hidden"
                           style={{ background: peITM && !isATM ? C.redBg : 'transparent' }}
                         >
-                          <button
-                            className="text-[12px] font-bold cursor-pointer hover:opacity-70 transition-opacity w-16"
-                            style={{ color: C.text }}
-                            onClick={() => setStrikeOverview({ underlying: index, strike: s.strike_price, optionType: 'PE', instrumentKey: s.put_options?.instrument_key || '' })}
+                          {/* OI background bar */}
+                          {peOIWidth > 0 && (
+                            <div
+                              className="absolute left-0 top-0 bottom-0 opacity-20"
+                              style={{
+                                width: `${peOIWidth}%`,
+                                background: `linear-gradient(90deg, ${C.red} 0%, transparent 100%)`,
+                                transition: 'width 0.3s ease',
+                              }}
+                            />
+                          )}
+                          <span
+                            className="text-[12px] font-bold relative z-10"
+                            style={{ color: C.text, fontVariantNumeric: 'tabular-nums' }}
+                            onClick={(e) => { e.stopPropagation(); setStrikeOverview({ underlying: index, strike: s.strike_price, optionType: 'PE', instrumentKey: s.put_options?.instrument_key || '' }) }}
                           >
                             {fmtLtp(pe.ltp)}
-                          </button>
-                          <span className="text-[10px] w-12" style={{ color: peChg.up === true ? C.green : peChg.up === false ? C.red : C.textMuted }}>
-                            {peChg.text}
                           </span>
                         </div>
                       </div>
                     </React.Fragment>
                   )
                 } else {
+                  // OI Mode
+                  const ceOI = ce.oi || 0
+                  const peOI = pe.oi || 0
+                  const ceOIChg = ce.prev_oi > 0 ? ce.oi - ce.prev_oi : 0
+                  const peOIChg = pe.prev_oi > 0 ? pe.oi - pe.prev_oi : 0
+
                   return (
                     <React.Fragment key={s.strike_price}>
                       {showSpotBadge && (
                         <div
                           data-spot-badge="true"
                           className="grid items-center"
-                          style={{ gridTemplateColumns: '1fr 72px 1fr', height: '30px', borderBottom: `1px solid ${C.borderLight}` }}
+                          style={{ gridTemplateColumns: '1fr 48px 68px 64px 48px 1fr', height: '28px', borderBottom: `1px solid ${C.border}` }}
                         >
-                          <div className="border-r" style={{ borderColor: C.border, background: C.greenBg }} />
-                          <div className="flex items-center justify-center">
-                            <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold text-white whitespace-nowrap" style={{ background: '#374151' }}>
-                              Spot: {data!.spot.toFixed(2)}
+                          <div className="border-r" style={{ borderColor: C.border, background: C.greenDim }} />
+                          <div className="border-r" style={{ borderColor: C.border }} />
+                          <div
+                            className="flex items-center justify-center gap-1.5"
+                            style={{ borderRight: `1px solid ${C.border}`, background: C.spotBadge }}
+                          >
+                            <Zap className="size-3" style={{ color: C.blue }} />
+                            <span className="text-[10px] font-bold" style={{ color: C.blue, fontVariantNumeric: 'tabular-nums' }}>
+                              {data!.spot.toFixed(2)}
                             </span>
                           </div>
-                          <div style={{ background: C.redBg }} />
+                          <div className="border-r" style={{ borderColor: C.border }} />
+                          <div className="border-r" style={{ borderColor: C.border }} />
+                          <div style={{ background: C.redDim }} />
                         </div>
                       )}
+
                       <div
                         data-atm={isATM ? 'true' : undefined}
-                        className="grid items-center transition-colors duration-75"
+                        className="grid items-center transition-all duration-100 cursor-pointer group relative"
                         style={{
-                          gridTemplateColumns: '1fr 72px 1fr',
-                          height: '40px',
+                          gridTemplateColumns: '1fr 48px 68px 64px 48px 1fr',
+                          height: isATM ? '46px' : '38px',
                           borderBottom: `1px solid ${isATM ? C.atmBorder : C.borderLight}`,
                           background: isATM ? C.atmBg : 'transparent',
                         }}
-                        onMouseEnter={e => { if (!isATM) e.currentTarget.style.background = '#F0F4FF' }}
+                        onMouseEnter={e => { if (!isATM) e.currentTarget.style.background = C.surfaceHover }}
                         onMouseLeave={e => { if (!isATM) e.currentTarget.style.background = 'transparent' }}
+                        onClick={() => {
+                          if (ce.oi >= pe.oi) openTrade('CE', s.strike_price, ce.ltp, 'BUY')
+                          else openTrade('PE', s.strike_price, pe.ltp, 'BUY')
+                        }}
                       >
-                        <div className="flex items-center justify-end pr-3 border-r text-[12px] font-bold" style={{ borderColor: C.border, color: C.text, background: ceITM && !isATM ? C.greenBg : 'transparent' }}>
-                          {ce.oi > 0 ? fmtOI(ce.oi) : '-'}
+                        {/* CE OI */}
+                        <div
+                          className="flex items-center justify-end pr-3 border-r relative overflow-hidden"
+                          style={{ borderColor: C.border, background: ceITM && !isATM ? C.greenBg : 'transparent' }}
+                        >
+                          {ceOIWidth > 0 && (
+                            <div
+                              className="absolute right-0 top-0 bottom-0 opacity-25"
+                              style={{
+                                width: `${ceOIWidth}%`,
+                                background: `linear-gradient(270deg, ${C.green} 0%, transparent 100%)`,
+                                transition: 'width 0.3s ease',
+                              }}
+                            />
+                          )}
+                          <span className="text-[11px] font-bold relative z-10" style={{ color: C.text, fontVariantNumeric: 'tabular-nums' }}>
+                            {ceOI > 0 ? fmtOI(ceOI) : '-'}
+                          </span>
                         </div>
-                        <div className="flex items-center justify-center text-[12px] font-bold border-r" style={{ borderColor: C.border, color: isATM ? C.primary : C.text, background: isATM ? C.atmBg : 'transparent' }}>
-                          {formatINRWhole(s.strike_price)}
+
+                        {/* CE OI Chg */}
+                        <div
+                          className="flex items-center justify-center border-r text-[10px] font-semibold relative z-10"
+                          style={{
+                            borderColor: C.border,
+                            color: ceOIChg > 0 ? C.green : ceOIChg < 0 ? C.red : C.textMuted,
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {ceOIChg !== 0 ? `${ceOIChg > 0 ? '+' : ''}${fmtOI(Math.abs(ceOIChg))}` : '-'}
                         </div>
-                        <div className="flex items-center pl-3 text-[12px] font-bold" style={{ color: C.text, background: peITM && !isATM ? C.redBg : 'transparent' }}>
-                          {pe.oi > 0 ? fmtOI(pe.oi) : '-'}
+
+                        {/* Strike */}
+                        <div
+                          className="flex flex-col items-center justify-center border-r relative z-10"
+                          style={{ borderColor: C.border, background: isATM ? C.primaryBg : 'transparent' }}
+                        >
+                          <span
+                            className="text-[12px] font-extrabold"
+                            style={{ color: isATM ? C.primary : C.text, fontVariantNumeric: 'tabular-nums' }}
+                          >
+                            {formatINRWhole(s.strike_price)}
+                          </span>
+                          {isATM && (
+                            <span className="text-[8px] font-bold mt-px tracking-wider" style={{ color: C.primary }}>ATM</span>
+                          )}
+                        </div>
+
+                        {/* Spread */}
+                        <div
+                          className="flex items-center justify-center border-r relative z-10"
+                          style={{ borderColor: C.border, background: isATM ? 'rgba(251,191,36,0.06)' : 'transparent' }}
+                        >
+                          {spread > 0 ? (
+                            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ color: C.gold, background: 'rgba(251,191,36,0.1)', fontVariantNumeric: 'tabular-nums' }}>
+                              {spread.toFixed(1)}
+                            </span>
+                          ) : (
+                            <span className="text-[11px]" style={{ color: C.textMuted }}>-</span>
+                          )}
+                        </div>
+
+                        {/* PE OI Chg */}
+                        <div
+                          className="flex items-center justify-center border-r text-[10px] font-semibold relative z-10"
+                          style={{
+                            borderColor: C.border,
+                            color: peOIChg > 0 ? C.green : peOIChg < 0 ? C.red : C.textMuted,
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {peOIChg !== 0 ? `${peOIChg > 0 ? '+' : ''}${fmtOI(Math.abs(peOIChg))}` : '-'}
+                        </div>
+
+                        {/* PE OI */}
+                        <div
+                          className="flex items-center pl-3 relative overflow-hidden"
+                          style={{ background: peITM && !isATM ? C.redBg : 'transparent' }}
+                        >
+                          {peOIWidth > 0 && (
+                            <div
+                              className="absolute left-0 top-0 bottom-0 opacity-25"
+                              style={{
+                                width: `${peOIWidth}%`,
+                                background: `linear-gradient(90deg, ${C.red} 0%, transparent 100%)`,
+                                transition: 'width 0.3s ease',
+                              }}
+                            />
+                          )}
+                          <span className="text-[11px] font-bold relative z-10" style={{ color: C.text, fontVariantNumeric: 'tabular-nums' }}>
+                            {peOI > 0 ? fmtOI(peOI) : '-'}
+                          </span>
                         </div>
                       </div>
                     </React.Fragment>
@@ -742,29 +1055,36 @@ export function OptionChainPage() {
 
               {/* ── Legend ── */}
               <div
-                className="shrink-0 flex items-center justify-center gap-4 py-1 border-t text-[9px]"
-                style={{ borderColor: C.border, color: C.textMuted, background: C.headerBg }}
+                className="shrink-0 flex items-center justify-center gap-5 py-2 px-3"
+                style={{ background: C.headerBg, borderTop: `1px solid ${C.border}` }}
               >
-                <span className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.green }} />
-                  Calls
+                <span className="flex items-center gap-1.5 text-[9px] font-medium" style={{ color: C.textMuted }}>
+                  <span className="w-2 h-2 rounded-sm" style={{ background: C.green }} />
+                  Calls (ITM)
                 </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.red }} />
-                  Puts
+                <span className="flex items-center gap-1.5 text-[9px] font-medium" style={{ color: C.textMuted }}>
+                  <span className="w-2 h-2 rounded-sm" style={{ background: C.red }} />
+                  Puts (ITM)
                 </span>
-                <span>ATM highlighted</span>
+                <span className="flex items-center gap-1.5 text-[9px] font-medium" style={{ color: C.textMuted }}>
+                  <span className="w-2 h-2 rounded-sm" style={{ background: C.gold }} />
+                  Spread
+                </span>
+                <span className="flex items-center gap-1.5 text-[9px] font-medium" style={{ color: C.textMuted }}>
+                  <span className="w-2 h-2 rounded-sm" style={{ background: `linear-gradient(270deg, ${C.green}, transparent)`, opacity: 0.5 }} />
+                  OI Bars
+                </span>
               </div>
             </div>
           </div>
         ) : ocError ? (
           <div className="flex-1 flex items-center justify-center p-6">
-            <div className="text-center max-w-sm">
-              <div className="text-[28px] mb-2">&#9888;&#65039;</div>
-              <div className="text-[13px] font-medium mb-1" style={{ color: C.text }}>
+            <div className="text-center max-w-sm p-6 rounded-xl" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
+              <div className="text-[32px] mb-3">&#9888;&#65039;</div>
+              <div className="text-[14px] font-bold mb-2" style={{ color: C.text }}>
                 {ocError === 'upstox_token' ? 'Upstox Token Required' : 'Data Not Available'}
               </div>
-              <div className="text-[11px] leading-relaxed" style={{ color: C.textDim }}>
+              <div className="text-[12px] leading-relaxed" style={{ color: C.textSec }}>
                 {ocError === 'upstox_token'
                   ? 'Option chain data requires a valid Upstox access token. Please connect your Upstox account or set the token via admin settings.'
                   : 'Could not load option chain data. This may be due to a network issue or the data source is unavailable. Please try again.'}
@@ -783,45 +1103,50 @@ export function OptionChainPage() {
       {/* ═══ Trade Panel (Bottom Sheet) ═══ */}
       {trade.open && (
         <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setTrade(defaultTrade)} />
-          <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-2xl max-h-[85vh] overflow-y-auto">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setTrade(defaultTrade)} />
+          <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl shadow-2xl max-h-[85vh] overflow-y-auto" style={{ background: C.surface, borderTop: `1px solid ${C.border}` }}>
             <div className="flex justify-center pt-2 pb-1">
-              <div className="w-10 h-1 rounded-full" style={{ background: C.border }} />
+              <div className="w-10 h-1 rounded-full" style={{ background: C.borderAccent }} />
             </div>
 
-            <div className="flex items-center justify-between px-4 pb-3 border-b" style={{ borderColor: C.border }}>
+            <div className="flex items-center justify-between px-5 pb-3 border-b" style={{ borderColor: C.border }}>
               <div>
                 <p className="text-sm font-bold" style={{ color: C.text }}>
                   {index} {trade.strike} {trade.optionType}
                 </p>
-                <p className="text-[11px]" style={{ color: C.textDim }}>
+                <p className="text-[11px] mt-0.5" style={{ color: C.textSec }}>
                   {fmtExpiry(expiry)} &middot; Lot: {lotSize} &middot; LTP: {formatINR(trade.ltp)}
                 </p>
               </div>
-              <button onClick={() => setTrade(defaultTrade)} className="p-1.5 rounded-full hover:bg-gray-100">
-                <X className="size-5" style={{ color: C.textDim }} />
+              <button onClick={() => setTrade(defaultTrade)} className="p-1.5 rounded-full transition-colors" style={{ color: C.textSec }}
+                onMouseEnter={e => e.currentTarget.style.background = C.surfaceAlt}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <X className="size-5" />
               </button>
             </div>
 
-            <div className="px-4 py-3 space-y-3">
+            <div className="px-5 py-4 space-y-4">
               {/* Buy / Sell Toggle */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setTrade(t => ({ ...t, side: 'BUY' }))}
-                  className="py-2.5 rounded-lg text-sm font-bold transition-colors"
+                  className="py-2.5 rounded-lg text-sm font-bold transition-all duration-200"
                   style={{
-                    background: trade.side === 'BUY' ? C.green : '#F5F5F5',
-                    color: trade.side === 'BUY' ? '#fff' : C.textDim,
+                    background: trade.side === 'BUY' ? C.green : C.surfaceAlt,
+                    color: trade.side === 'BUY' ? '#fff' : C.textSec,
+                    border: trade.side === 'BUY' ? `1px solid ${C.green}` : `1px solid ${C.border}`,
                   }}
                 >
                   BUY {trade.optionType}
                 </button>
                 <button
                   onClick={() => setTrade(t => ({ ...t, side: 'SELL' }))}
-                  className="py-2.5 rounded-lg text-sm font-bold transition-colors"
+                  className="py-2.5 rounded-lg text-sm font-bold transition-all duration-200"
                   style={{
-                    background: trade.side === 'SELL' ? C.red : '#F5F5F5',
-                    color: trade.side === 'SELL' ? '#fff' : C.textDim,
+                    background: trade.side === 'SELL' ? C.red : C.surfaceAlt,
+                    color: trade.side === 'SELL' ? '#fff' : C.textSec,
+                    border: trade.side === 'SELL' ? `1px solid ${C.red}` : `1px solid ${C.border}`,
                   }}
                 >
                   SELL {trade.optionType}
@@ -829,15 +1154,15 @@ export function OptionChainPage() {
               </div>
 
               {/* Order Type + Product */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.textMuted }}>Order Type</label>
                   <div className="relative mt-1">
                     <select
                       value={trade.orderType}
                       onChange={e => setTrade(t => ({ ...t, orderType: e.target.value as 'MARKET' | 'LIMIT' }))}
-                      className="w-full px-3 py-2 rounded-lg border text-sm font-medium bg-white appearance-none pr-8"
-                      style={{ borderColor: C.border, color: C.text }}
+                      className="w-full px-3 py-2.5 rounded-lg text-sm font-medium appearance-none pr-8"
+                      style={{ background: C.surfaceAlt, borderColor: C.border, color: C.text, border: `1px solid ${C.border}` }}
                     >
                       <option value="MARKET">Market</option>
                       <option value="LIMIT">Limit</option>
@@ -851,8 +1176,8 @@ export function OptionChainPage() {
                     <select
                       value={trade.productType}
                       onChange={e => setTrade(t => ({ ...t, productType: e.target.value as 'INTRADAY' | 'DELIVERY' }))}
-                      className="w-full px-3 py-2 rounded-lg border text-sm font-medium bg-white appearance-none pr-8"
-                      style={{ borderColor: C.border, color: C.text }}
+                      className="w-full px-3 py-2.5 rounded-lg text-sm font-medium appearance-none pr-8"
+                      style={{ background: C.surfaceAlt, borderColor: C.border, color: C.text, border: `1px solid ${C.border}` }}
                     >
                       <option value="INTRADAY">Intraday</option>
                       <option value="DELIVERY">Delivery</option>
@@ -871,8 +1196,8 @@ export function OptionChainPage() {
                     value={trade.limitPrice}
                     onChange={e => setTrade(t => ({ ...t, limitPrice: e.target.value }))}
                     placeholder={String(trade.ltp)}
-                    className="w-full mt-1 px-3 py-2 rounded-lg border text-sm font-mono"
-                    style={{ borderColor: C.border, color: C.text }}
+                    className="w-full mt-1 px-3 py-2.5 rounded-lg text-sm font-mono"
+                    style={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, color: C.text }}
                     step="0.05"
                   />
                 </div>
@@ -883,13 +1208,15 @@ export function OptionChainPage() {
                 <label className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.textMuted }}>
                   Quantity ({trade.lots} lot{trade.lots > 1 ? 's' : ''} = {totalQty} qty)
                 </label>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-3 mt-1">
                   <button
                     onClick={() => setTrade(t => ({ ...t, lots: Math.max(1, t.lots - 1) }))}
-                    className="w-10 h-10 rounded-lg border flex items-center justify-center hover:bg-gray-50 active:bg-gray-100 transition-colors"
-                    style={{ borderColor: C.border }}
+                    className="w-10 h-10 rounded-lg flex items-center justify-center transition-colors"
+                    style={{ border: `1px solid ${C.border}`, background: C.surfaceAlt, color: C.textSec }}
+                    onMouseEnter={e => e.currentTarget.style.borderColor = C.primary}
+                    onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
                   >
-                    <Minus className="size-4" style={{ color: C.textDim }} />
+                    <Minus className="size-4" />
                   </button>
                   <input
                     type="number"
@@ -898,23 +1225,25 @@ export function OptionChainPage() {
                       const v = parseInt(e.target.value) || 1
                       setTrade(t => ({ ...t, lots: Math.max(1, Math.min(v, 100)) }))
                     }}
-                    className="flex-1 text-center text-lg font-bold font-mono py-2 rounded-lg border"
-                    style={{ borderColor: C.border, color: C.text }}
+                    className="flex-1 text-center text-lg font-bold font-mono py-2.5 rounded-lg"
+                    style={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, color: C.text }}
                     min={1}
                     max={100}
                   />
                   <button
                     onClick={() => setTrade(t => ({ ...t, lots: Math.min(100, t.lots + 1) }))}
-                    className="w-10 h-10 rounded-lg border flex items-center justify-center hover:bg-gray-50 active:bg-gray-100 transition-colors"
-                    style={{ borderColor: C.border }}
+                    className="w-10 h-10 rounded-lg flex items-center justify-center transition-colors"
+                    style={{ border: `1px solid ${C.border}`, background: C.surfaceAlt, color: C.textSec }}
+                    onMouseEnter={e => e.currentTarget.style.borderColor = C.primary}
+                    onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
                   >
-                    <Plus className="size-4" style={{ color: C.textDim }} />
+                    <Plus className="size-4" />
                   </button>
                 </div>
               </div>
 
               {/* Stop Loss & Target */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: C.red }}>Stop Loss</label>
                   <input
@@ -922,8 +1251,8 @@ export function OptionChainPage() {
                     value={trade.stopLoss}
                     onChange={e => setTrade(t => ({ ...t, stopLoss: e.target.value }))}
                     placeholder="Optional"
-                    className="w-full mt-1 px-3 py-2 rounded-lg border text-sm font-mono"
-                    style={{ borderColor: C.border, color: C.text }}
+                    className="w-full mt-1 px-3 py-2.5 rounded-lg text-sm font-mono"
+                    style={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, color: C.text }}
                     step="0.05"
                   />
                 </div>
@@ -934,44 +1263,44 @@ export function OptionChainPage() {
                     value={trade.target}
                     onChange={e => setTrade(t => ({ ...t, target: e.target.value }))}
                     placeholder="Optional"
-                    className="w-full mt-1 px-3 py-2 rounded-lg border text-sm font-mono"
-                    style={{ borderColor: C.border, color: C.text }}
+                    className="w-full mt-1 px-3 py-2.5 rounded-lg text-sm font-mono"
+                    style={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, color: C.text }}
                     step="0.05"
                   />
                 </div>
               </div>
 
               {/* Order Summary */}
-              <div className="rounded-lg p-3 space-y-1.5 text-xs" style={{ background: C.bg }}>
+              <div className="rounded-xl p-4 space-y-2 text-xs" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
                 <div className="flex justify-between">
-                  <span style={{ color: C.textDim }}>Available Margin</span>
-                  <span className="font-mono font-semibold" style={{ color: availableMargin > totalValue + brokerage ? C.green : C.red }}>
+                  <span style={{ color: C.textSec }}>Available Margin</span>
+                  <span className="font-mono font-bold" style={{ color: availableMargin > totalValue + brokerage ? C.green : C.red, fontVariantNumeric: 'tabular-nums' }}>
                     {formatINRWhole(availableMargin)}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span style={{ color: C.textDim }}>Price</span>
-                  <span className="font-mono font-semibold" style={{ color: C.text }}>
+                  <span style={{ color: C.textSec }}>Price</span>
+                  <span className="font-mono font-bold" style={{ color: C.text, fontVariantNumeric: 'tabular-nums' }}>
                     {trade.orderType === 'LIMIT' && trade.limitPrice ? parseFloat(trade.limitPrice).toFixed(2) : fmtLtp(trade.ltp)}
                     {trade.orderType === 'MARKET' && <span className="ml-1" style={{ color: C.textMuted }}>(MKT)</span>}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span style={{ color: C.textDim }}>Total Value</span>
-                  <span className="font-mono font-semibold" style={{ color: C.text }}>
+                  <span style={{ color: C.textSec }}>Total Value</span>
+                  <span className="font-mono font-bold" style={{ color: C.text, fontVariantNumeric: 'tabular-nums' }}>
                     {formatINR(totalValue)}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span style={{ color: C.textDim }}>Brokerage</span>
-                  <span className="font-mono" style={{ color: C.text }}>
+                  <span style={{ color: C.textSec }}>Brokerage</span>
+                  <span className="font-mono" style={{ color: C.text, fontVariantNumeric: 'tabular-nums' }}>
                     {formatINR(brokerage)}
                   </span>
                 </div>
                 {trade.side === 'SELL' && (
                   <div className="flex justify-between" style={{ color: C.red }}>
                     <span>Margin (150%)</span>
-                    <span className="font-mono font-semibold">
+                    <span className="font-mono font-bold" style={{ fontVariantNumeric: 'tabular-nums' }}>
                       {formatINRWhole(totalValue * 1.5)}
                     </span>
                   </div>
@@ -982,8 +1311,12 @@ export function OptionChainPage() {
               <button
                 onClick={handleConfirm}
                 disabled={fillPrice <= 0 || !token}
-                className="w-full py-3 rounded-xl text-white font-bold text-sm transition-all disabled:opacity-40"
-                style={{ background: trade.side === 'BUY' ? C.green : C.red }}
+                className="w-full py-3.5 rounded-xl text-white font-bold text-sm transition-all duration-200 disabled:opacity-40"
+                style={{
+                  background: trade.side === 'BUY'
+                    ? `linear-gradient(135deg, ${C.green}, #16a34a)`
+                    : `linear-gradient(135deg, ${C.red}, #dc2626)`,
+                }}
               >
                 {!token ? 'Login to Trade' : `${trade.side} ${trade.lots} Lot (${totalQty} Qty)`}
               </button>
