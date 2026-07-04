@@ -11,8 +11,10 @@ const INSTRUMENT_KEYS: Record<string, string> = {
   SENSEX: 'BSE_INDEX|SENSEX',
 }
 
+// ISR: cache for 5 seconds. 100 users in same 5s window = only 1 Upstox API call.
+// Vercel edge serves cached response to all subsequent requests instantly.
 export const dynamic = 'force-dynamic'
-export const revalidate = 0
+export const revalidate = 5
 
 export async function GET(request: Request) {
   try {
@@ -50,6 +52,8 @@ export async function GET(request: Request) {
         Accept: 'application/json',
       },
       signal: controller.signal,
+      // Tell Vercel to cache this upstream response too
+      next: { revalidate: 5 },
     })
     clearTimeout(timeout)
 

@@ -9,7 +9,6 @@ import { useTradeSuccess } from '@/components/pepertect/trade-success-popup'
 import { TradeConfirmModal, TradeConfirmData } from '@/components/pepertect/ui/trade-confirm-modal'
 import { StrikeOverviewDrawer } from '@/components/pepertect/ui/strike-overview-drawer'
 import { X, Minus, Plus, ChevronDown } from 'lucide-react'
-import { wsClient } from '@/lib/ws-client'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -137,7 +136,6 @@ export function OptionChainPage() {
   const [loading, setLoading] = useState(true)
   const [ocError, setOcError] = useState<'upstox_token' | 'timeout' | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('LTP')
-  // WebSocket connection managed by wsClient singleton
   const tableBodyRef = useRef<HTMLDivElement>(null)
   const scrolledOnce = useRef(false)
 
@@ -187,7 +185,9 @@ export function OptionChainPage() {
     return () => { cancelled = true }
   }, [index])
 
-  // Option chain data — fetch via Vercel API (fast) + WS for live updates
+  // Option chain data — polled via Vercel API with ISR caching.
+  // Vercel caches for 5s: 100 users = 1 Upstox API call per 5s (same efficiency as WS).
+  // No WebSocket used for OC — saves Render bandwidth, WS reserved for market/positions/trades.
   useEffect(() => {
     if (!expiry) return
 
@@ -195,50 +195,40 @@ export function OptionChainPage() {
     setOcError(null)
     setLoading(true)
 
-    // 1. Immediate fetch from Vercel API proxy (fast, 1-2s from Vercel)
-    fetch(`/api/options/chain?underlying=${index}&expiry=${expiry}`)
-      .then(r => r.json())
-      .then(json => {
+    const fetchData = async () => {
+      if (cancelled) return
+      try {
+        const res = await fetch(`/api/options/chain?underlying=${index}&expiry=${expiry}`)
+        const json = await res.json()
         if (cancelled) return
         if (json?.success && json?.data?.strikes?.length > 0) {
           setData(json.data)
           setOcError(null)
+          return true
         }
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setLoading(false) })
+        if (json?.error === 'UPSTOX_TOKEN_EXPIRED') setOcError('upstox_token')
+        return false
+      } catch { return false }
+      finally { if (!cancelled) setLoading(false) }
+    }
 
-    // 2. WebSocket subscription for live updates (fallback + real-time refresh)
-    wsClient.subscribe('options', { underlying: index, expiry })
+    // Immediate first fetch
+    fetchData()
 
-    const unsub = wsClient.on('options:update', (msg) => {
-      if (!cancelled && msg && msg.underlying?.toUpperCase() === index.toUpperCase() && msg.expiry === expiry) {
-        setData(msg)
-        setOcError(null)
-      }
-    })
-
-    const unsubError = wsClient.on('options:error', (msg) => {
-      if (!cancelled && msg?.message === 'UPSTOX_TOKEN_MISSING') {
-        setOcError('upstox_token')
-      }
-    })
+    // Poll every 5 seconds (matches Vercel ISR revalidate window)
+    const pollTimer = setInterval(fetchData, 5000)
 
     // Timeout: if no data in 8s, show error
     const timeout = setTimeout(() => {
-      if (!cancelled && !data) {
-        setOcError('timeout')
-      }
+      if (!cancelled && !data) setOcError('timeout')
     }, 8000)
 
     setLive(true)
 
     return () => {
       cancelled = true
-      unsub()
-      unsubError()
+      clearInterval(pollTimer)
       clearTimeout(timeout)
-      wsClient.unsubscribe('options')
       setLive(false)
     }
   }, [index, expiry])

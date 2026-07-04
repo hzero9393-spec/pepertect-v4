@@ -195,7 +195,7 @@ export class OptionChainService {
       const url = `${'https://api.upstox.com/v2'}/option/chain?instrument_key=${encodeURIComponent(config.instrumentKey)}&expiry_date=${encodeURIComponent(expiry)}`
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(30000),
       })
       if (!res.ok) {
         const now = Date.now()
