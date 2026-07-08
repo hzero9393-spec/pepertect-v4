@@ -1,9 +1,10 @@
 FROM node:20-alpine AS base
-RUN npm install -g bun
+# Install bun and build tools needed for native modules (sharp, pg, etc.)
+RUN npm install -g bun && \
+    apk add --no-cache libc6-compat python3 make g++ vips-dev
 
 # Install dependencies
 FROM base AS deps
-RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package.json bun.lock ./
@@ -22,9 +23,12 @@ RUN bunx prisma generate
 # Build Next.js
 RUN bun run build
 
-# Production image
+# Production image - minimal
 FROM node:20-alpine AS runner
 WORKDIR /app
+
+# Runtime dependencies for sharp and pg
+RUN apk add --no-cache libc6-compat vips
 
 ENV NODE_ENV=production
 
